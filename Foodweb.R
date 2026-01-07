@@ -148,3 +148,85 @@ total_abu
 
 ggsave(plot = total_abu, filename = "total_abundance.jpg", width = 6.5,
        height = 5.26, dpi = 450)  
+
+###############
+#NETWORK
+##############
+#PossiblePackages
+#library(cheddar) Load from Git
+#library(enaR) Load from Git
+library(bipartite)
+library(igraph)
+
+matrix <- read.csv("mergedData_wide_PresenceAbsence.csv", sep = ";")
+#ISSUE WITH ZOTU LISTS NEEDS TO BE ADRESSED BEFORE WE CONTINUE
+
+diet_matrix <- matrix[, 10:487]
+
+Insect_ID <- read.csv("mergedData_long_format.csv", sep = ";")
+
+Base_ID <- read.csv("Foodweb_samples_2024.csv", sep = ";")
+
+Bird_ID <- Base_ID %>%
+  filter(Group == "Bird") %>%
+  select(ID, Species) %>%
+  rename(
+    Sample = ID,
+    Family   = Species
+  )
+
+#Exchange SampleID for species (predators)
+
+#Remove the bloodmeal samples for now
+excluded_primers <- c("P16S", "12SV5")
+
+Insect_Filter <- Insect_ID %>%
+  filter(!Primerset %in% excluded_primers)
+
+#Sum reads across remaining primers
+summed_reads <- Insect_Filter %>%
+  group_by(Sample, Family) %>%
+  summarise(total_reads = sum(Count), .groups = "drop")
+
+#Identify families that cannot be predators
+non_predator_species <- c(
+  "Chironomidae",
+  "Geometridae",
+  "Carabidae",
+  "Unknown",
+  "Noctuidae",
+  "Simuliidae"
+)
+
+dominant_species <- summed_reads %>%
+  filter(!Family %in% non_predator_species) %>% 
+  group_by(Sample) %>%
+  slice_max(order_by = total_reads, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Sample, Family)
+
+#Fill in the bird samples
+
+dominant_no_birds <- dominant_species %>%
+  filter(!Sample %in% Bird_ID$Sample)
+
+predator_lookup <- bind_rows(
+  dominant_no_birds,
+  Bird_ID %>% select(Sample, Family)
+)
+
+#Name lookup vector
+id_to_species <- setNames(dominant_species$Family,
+                          dominant_species$Sample)
+
+#Exchange names
+colnames(diet_matrix) <- id_to_species[colnames(diet_matrix)]
+
+#Check missing IDs
+setdiff(colnames(diet_mat), names(id_to_species))
+
+#Check duplicates
+any(duplicated(colnames(diet_mat)))
+
+#Exclude mosquitoes for bloodmeal analysis
+
