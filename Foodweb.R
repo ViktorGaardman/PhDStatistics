@@ -157,9 +157,43 @@ ggsave(plot = total_abu, filename = "total_abundance.jpg", width = 6.5,
 #library(enaR) Load from Git
 library(bipartite)
 library(igraph)
+library(readxl)
 
-matrix <- read.csv("mergedData_wide_PresenceAbsence.csv", sep = ";")
+matrix <- read_excel("mergedData_wide_PresenceAbsence_Fixed.xlsx")
+
+matrix <- read_csv(
+  "mergedData_wide_PresenceAbsence.csv",
+  col_types = cols(
+    zotu_list = col_character()
+  ))
+
+write.csv(matrix, "mergedData_wide_PresenceAbsence2.csv",
+          row.names = FALSE,
+          quote = TRUE)
+
 #ISSUE WITH ZOTU LISTS NEEDS TO BE ADRESSED BEFORE WE CONTINUE
+
+lines <- readLines("mergedData_wide_PresenceAbsence_Copy.csv")
+
+is_real_row <- grepl("^Eukaryota,", lines) #only rows starting with Eukaryota are real
+
+fixed_lines <- character()
+current <- ""
+
+for (ln in lines) {
+  if (grepl("^Eukaryota,", ln)) {
+    if (current != "") fixed_lines <- c(fixed_lines, current)
+    current <- ln
+  } else {
+    current <- paste0(current, "|", ln)
+  }
+}
+
+fixed_lines <- c(fixed_lines, current)
+
+writeLines(fixed_lines, "mergedData_wide_PresenceAbsence_FIXED.csv")
+
+###########
 
 diet_matrix <- matrix[, 10:487]
 
