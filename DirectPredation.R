@@ -7,6 +7,8 @@ library('DHARMa')
 
 rm(list = ls())
 
+setwd("C:/Users/vikto/OneDrive/Skrivbord/PhD/R/PhDStatistics")
+
 df <- read.csv("DirectPredation_CombinedClean.csv", 
                sep=";", header=TRUE, as.is=TRUE)
 
@@ -26,6 +28,29 @@ df <- df %>%
 
 df <- df %>%
   filter(!Sex %in% "Control")
+
+#Basic plot
+pred_plot <- ggplot()+
+  geom_jitter(data = df, aes(Temp, Dead), alpha = 0.6, color = "black",
+              width = 0.2) +
+  stat_smooth(method= 'lm', linewidth = 0.8, color = "black") +
+  geom_point() +
+  theme_minimal() +
+  ylab("Mosquitoes eaten") +
+  xlab("Temperature") +
+  scale_x_continuous(limits = c(3, 15), breaks = seq(3, 15, by = 3)) +
+  theme(
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    title = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.line = element_line(color = "black"))
+
+pred_plot
+
+ggsave("Observed_Direct.png", plot = pred_plot, 
+       width = 6.5, height = 5.26, dpi = 450)
 
 #fit model
 predation_mod <- glmmTMB(cbind(Dead, Alive) 
