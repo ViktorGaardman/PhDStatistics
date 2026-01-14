@@ -1,4 +1,3 @@
-library(readr)
 library(tidyverse)
 library(ggcorrplot)
 library(car)
@@ -7,6 +6,7 @@ library(lme4)
 library(performance)
 library(DHARMa)
 library(ggeffects)
+library(nlme)
 
 set.seed(123)
 
@@ -24,13 +24,15 @@ ponds2025 <- read.csv("Ponds2025_Clean.csv",
 
 #Combine pond datasets
 
+ponds2024$Temp_PE <- as.numeric(ponds2024$Temp_PE)
+
 pond_data <- bind_rows(ponds2024, ponds2025)
 
 
 #Standardize data
 pond_data <- pond_data %>% 
   mutate(across(where(is.character) & c("Average_Volume",
-                      "Conductivity", "PH", "Average_Temp",
+                      "Conductivity", "PH", "Average_Temp", "Temp_PE",
                       "Arthropod_Diversity", "Plant_Diversity",
                       "Veg_Cov", "Perimeter"
   ), ~ as.numeric(gsub(",", ".", .))))
@@ -38,7 +40,7 @@ pond_data <- pond_data %>%
 
 pond_data <- pond_data %>% 
   mutate(across(c("Mosses_PresAbs", "Eriophorum_PresAbs", "Pred_Den",
-                  "Bottom_substrate", "Habitat"), as.factor))
+                  "Bottom_substrate", "Habitat", "Year"), as.factor))
 
 str(pond_data)
 
@@ -48,14 +50,18 @@ str(pond_data)
 #Plant_Div due to high correlations
 pond_corr <- pond_data %>% 
   select(Average_Volume, Conductivity, PH, 
- #        Perimeter, Arthropod_Diversity, Plant_Diversity, 
+         Perimeter, Arthropod_Diversity, Plant_Diversity, 
          Veg_Cov, Average_Temp) %>%
   cor(use = "pairwise.complete.obs")  # Avoids NA issues
 
 # Plot the correlation matrix
 ggcorrplot(pond_corr, lab = TRUE, type = "lower", hc.order = TRUE)
 
-#Standardize numeric variables
+#Distribution of factor levels
+table(pond_data$Habitat, pond_data$Bottom_substrate)
+#Remove habitat, use only bottom substrate.
+
+#Standardize numeric variables(?)
 pond_data <- pond_data %>%
   mutate(across(where(is.numeric) & !all_of(c("PondID", "Mean_Larvae1",
                                               "Mean_Larvae2", "Larvae_Sampled1",
@@ -80,29 +86,27 @@ emg_2024 <- read.csv("Emergence2024.csv",
 emg_2025 <- read.csv("Emergence2025.csv", 
                     sep=";", header=TRUE, as.is=TRUE)
 
-long_2025 <- read.csv("Longevity_2025.csv", 
+long_2025 <- read.csv("Longevity2025_Clean.csv", 
                       sep=";", header=TRUE, as.is=TRUE)
 
-long_2025 <- subset(long_2025, !(PondID %in% c("9", "13")))
-
-long_2025$ID <- as.numeric(long_2025$ID)
+long_2025 <- long_2025[,2:8]
 
 emg_dat <- bind_rows(emg_2024, emg_2025)
 
-emg_data <- bind_rows(emg_dat, long_2025)
-
 #Drop comment column
 emg_data <- emg_data[,1:9]
+
+emg_data <- bind_rows(emg_dat, long_2025)
 
 #Prep data
 emg_data <- emg_data %>% 
   mutate(across(where(is.character) & c("Weight", "Wing_Length",
                                         "Body_Length",
-                                        "NumericDate"),
+                                        "NumericDate", "Longevity"),
                 ~ as.numeric(gsub(",", ".", .))))
 
 emg_data <- emg_data %>%
-  mutate(across(c("Species", "Sex"), as.factor))
+  mutate(across(c("Species", "Sex", "PondID"), as.factor))
 
 str(emg_data)
 
@@ -160,32 +164,30 @@ write_csv2(full_dataset, "full_combined_data24-25.csv")
 full_dataset_N <- full_dataset %>% filter(Species == "N")  # Subset for species N
 full_dataset_I <- full_dataset %>% filter(Species == "I")  # Subset for species I
 
+full_dataset_N$PondID <- as.factor(full_dataset_N$PondID)
 
 #Model the data
 #Model1:: What factors influence the mean number of larvae in the pond?
 #Since we don't know exactly when in their development we reach the larvae,
 #this is a very shaky test in my opinion.
 
-larv_mod1 <- lm(data = pond_data, 
+larv_mod1 <- lmer(data = pond_data, 
                 Mean_Larvae1 ~ 
-                  Average_Volume + 
+                  Average_Volume +
                   Habitat +
                   Pred_Den +
                   Conductivity + 
                   PH + 
-                  Average_Temp + 
+                  Temp_PE + 
                   Veg_Cov + 
-                  Bottom_substrate)
+                  Bottom_substrate +
+                  (1|Year))
 
-#Habitat, Pred_Den, Arthropod_Diversity & Eriophorum_PresAbs removed to improve model fit
-#Above is best model by AIC through removal of least significant terms
-#Adjusted R-square also peak
 
 
 summary(larv_mod1)
-Anova(larv_mod1, type = c('3'))
+Anova(larv_mod1, type = c('2'))
 
-check_model(larv_mod1)
 check_normality(larv_mod1)  # Tests if residuals are normally distributed
 check_heteroscedasticity(larv_mod1)  # Checks if residual variance is consistent
 check_collinearity(larv_mod1)
@@ -200,59 +202,40 @@ vif(larv_mod1)
 #Arthropod diversity removed due to correlation with temperature, volume and predator density
 #Likely to be more predators where there is higher diversity!
 
-
-#Final models for nigripes
-#Nothing influences weight. We lack data on food availability - is this the key?
-Emergence_Weight_N <- lmer(data = full_dataset_N, 
-                           Weight ~ 
-                             Average_Volume + 
-                             Habitat +
-                             Conductivity + 
-                             PH + 
-                             Average_Temp + 
-                             Veg_Cov + 
-                             Pred_Den +
-                             Bottom_substrate +
-                             (1|PondID) +
-                             (1|NumericDate))
-
-summary(Emergence_Weight_N)
-Anova(Emergence_Weight_N, type = c('3'))
-AIC(Emergence_Weight_N)
-
-check_model(Emergence_Weight_N)
-check_normality(Emergence_Weight_N)  # Tests if residuals are normally distributed
-check_heteroscedasticity(Emergence_Weight_N)  # Checks if residual variance is consistent
-check_collinearity(Emergence_Weight_N)
-check_outliers(Emergence_Weight_N)
-vif(Emergence_Weight_N)
-
-
-#Body length best model (removed Pred_Den)
+#Body length
 Emergence_Body_N <- lmer(data = full_dataset_N, 
                            Body_Length ~ 
-                             Average_Volume + 
-                             Habitat +
-                             Conductivity + 
-                             PH + 
-                             Average_Temp + 
+                           Pred_Den +
+                           Average_Volume +
+                           Habitat +
+                           Bottom_substrate +
+                           Conductivity +
+                           PH + 
+                          Temp_PE + 
                              Veg_Cov + 
-                             Bottom_substrate +
-                             (1|PondID) +
-                             (1|NumericDate))
+                           Sex +
+                           NumericDate +
+                           (1|PondID) +
+                             (1|Year))
 
 
 summary(Emergence_Body_N)
-Anova(Emergence_Body_N, type = c('3')) #PH, habitat and Veg_Cov significant
+Anova(Emergence_Body_N, type = c('2')) #PH, habitat and Veg_Cov significant
+#nope not when year is included xD
 AIC(Emergence_Body_N)
 
 check_normality(Emergence_Body_N)  # Tests if residuals are normally distributed
 check_heteroscedasticity(Emergence_Body_N)  # Checks if residual variance is consistent
 check_collinearity(Emergence_Body_N)
+sim_res <- simulateResiduals(Emergence_Body_N)
+plot(sim_res)
 check_outliers(Emergence_Body_N)
+plot(Emergence_Body_N)      # residuals vs fitted
+qqnorm(resid(Emergence_Body_N))
+qqline(resid(Emergence_Body_N))
 vif(Emergence_Body_N)
 
-#Wing length. Best model includes only PH, but then PH still isn't significant.
+#Wing length. 
 #AKA nothing influences wing length. But body length does, so let's focus on that
 Emergence_Wing_N <- lmer(data = full_dataset_N, 
                          Wing_Length ~ 
@@ -261,18 +244,56 @@ Emergence_Wing_N <- lmer(data = full_dataset_N,
                            Habitat +
                            Conductivity + 
                            PH + 
-                           Average_Temp + 
+                           Temp_PE + 
                            Veg_Cov + 
                            Bottom_substrate +
+                           NumericDate +
+                           Sex +
                            (1|PondID) +
-                           (1|NumericDate))
+                           (1|Year))
 
+
+plot(Emergence_Wing_N)      # residuals vs fitted
+qqnorm(resid(Emergence_Wing_N))
+qqline(resid(Emergence_Wing_N))
 
 summary(Emergence_Wing_N)
-Anova(Emergence_Wing_N, type = c('3')) #PH, habitat and Veg_Cov significant
+Anova(Emergence_Wing_N, type = c('2')) #PH, habitat and Veg_Cov significant
 AIC(Emergence_Wing_N)
 
-#Plotting body length against PH, veg cov, and habitat
+check_normality(Emergence_Wing_N)  # Tests if residuals are normally distributed
+check_heteroscedasticity(Emergence_Wing_N)  # Checks if residual variance is consistent
+check_collinearity(Emergence_Wing_N)
+check_outliers(Emergence_Wing_N)
+vif(Emergence_Wing_N)
+
+#What factors influence longevity
+
+long_mod <- lmer(data = full_dataset_N,
+                 Longevity ~ 
+                   Average_Volume + 
+                   Pred_Den +
+                   Habitat +
+                   Conductivity + 
+                   PH + 
+                   Temp_PE + 
+                   Veg_Cov + 
+                   Bottom_substrate +
+                   Sex +
+                   (1|PondID))
+
+Anova(long_mod, type = c('2')) #pH, conductivity and temp significant! 
+#But really though or just phacking artifact??
+
+plot(long_mod)      # residuals vs fitted
+qqnorm(resid(long_mod))
+qqline(resid(long_mod))
+
+ggplot(data = full_dataset_N, aes(x = Longevity, fill = Sex)) + 
+  geom_bar()
+
+
+#Plotting longevity against pH, conductivity, temp
 
 plot_habitat <- ggplot(full_dataset_N, aes(x = Habitat, y = Body_Length)) +
   geom_boxplot(outlier.colour="black", outlier.shape=16,
@@ -296,7 +317,7 @@ plot_habitat
 
 #Predict for continuous variables
 
-vegcov_pred<- ggpredict(Emergence_Body_N, terms = "Veg_Cov")
+conductivity_pred<- ggpredict(Emergence_Body_N, terms = "Veg_Cov")
 
 plotpred_veg <- ggplot(vegcov_pred, aes(x = x, y = predicted)) +
   geom_line(linewidth = 0.8, color = "firebrick") +
@@ -319,7 +340,7 @@ plotpred_veg <- ggplot(vegcov_pred, aes(x = x, y = predicted)) +
 plotpred_veg
 
 plot_veg <- ggplot(full_dataset_N, aes(x = Veg_Cov, y = Body_Length)) +
-  stat_smooth(method= 'lm', linewidth = 0.8, color = "firebrick") +
+  stat_smooth(method= 'lm', linewidth = 0.8, color = "black") +
   geom_point() +
   theme_minimal() +
   ylab("Body length") +
@@ -372,17 +393,50 @@ plot_ph <- ggplot(full_dataset_N, aes(x = PH, y = Body_Length)) +
 
 plot_ph
 
-#We need more data on Impiger to make a good model.
-Emergence_Weight_I <- lmer(data = full_dataset_I, 
-                           Weight ~ 
-                             Average_Volume + 
-                             Conductivity +
-                             Pred_Den +
-                             (1|PondID) +
-                             (1|Num_date))
+observed <- plot_ph + plot_veg + plot_habitat
 
-summary(Emergence_Weight_N)
-Anova(Emergence_Weight_I, type = c('3'))
+ggsave(plot = observed, filename = "Observed_PondEffects_Body.png",
+       height = 5.26, width = 13, dpi = 300)
+
+#Check so rocky habitat (low body wieght) is not correlated with
+#Veg cover or pH
+
+hab_veg_plot <- ggplot(full_dataset_N, aes(x = Habitat, y = Veg_Cov))+
+  geom_boxplot()+
+  geom_point()
+
+hab_pH_plot <- ggplot(full_dataset_N, aes(x = Habitat, y = PH))+
+  geom_boxplot()+
+  geom_point()
+
+pH_veg_plot <- ggplot(full_dataset_N, aes(x = PH, y = Veg_Cov))+
+  geom_point()
+
+correlations <- pH_veg_plot + hab_pH_plot + hab_veg_plot
+
+ggsave(plot = correlations, filename = "pred_corrs.png",
+       height = 5.26, width = 13, dpi = 300)
+
+testplot <- ggplot(full_dataset_N, aes(x = Veg_Cov, y = Body_Length))+
+  geom_point(aes(color = Habitat))+
+  stat_smooth(aes(color = Habitat), method = "lm")
+
+ggsave(plot = testplot, filename = "corr_VegBodHab.png",
+       height = 5.26, width = 6.5, dpi = 300)
+
+#We need more data on Impiger to make a good model.
+Emergence_Wing_I <- lmer(data = full_dataset_I, 
+                           Body_Length ~ 
+                             Habitat +
+                             Conductivity + 
+                             PH + 
+                           Veg_Cov +
+                             (1|PondID) +
+                             (1|NumericDate))
+
+summary(Emergence_Wing_I)
+Anova(Emergence_Wing_I, type = c('3'))
+AIC(Emergence_Wing_I)
 
 check_model(Emergence_Weight_I)
 check_normality(Emergence_Weight_N)  # Tests if residuals are normally distributed
@@ -392,77 +446,45 @@ check_outliers(Emergence_Weight_N)
 vif(Emergence_Weight_N)
 
 #Model3&4:: What factors influence peak emergence date and end emergence date?
-#Kept only the variables from model2
+#Using only the variables from both years
 
-Emergence_Peak <- lmer(data = temporal_data, 
+temporal_N <- temporal_data %>% filter(Species == "N")  # Subset for species N
+temporal_I <- temporal_data %>% filter(Species == "I")  # Subset for species I
+
+EmergencePeak_N <- lmer(data = temporal_N, 
                        peak_emergence ~ 
-                         Species + 
                          Average_Volume + 
+                         Habitat +
+                         Bottom_substrate +
                          Conductivity + 
                          PH + 
-                         Average_Temp + 
+                         Temp_PE + 
                          Pred_Den +
                          Veg_Cov +
-                         (1|PondID))
-
-summary(Emergence_Peak)
-Anova(Emergence_Peak, type = c('3'))
-
-check_model(Emergence_Peak)
-check_normality(Emergence_Peak)  # Tests if residuals are normally distributed
-check_heteroscedasticity(Emergence_Peak)  # Checks if residual variance is consistent
-check_collinearity(Emergence_Peak)
-check_outliers(Emergence_Peak)
-vif(Emergence_Peak)
-
-#End of emergence not related to anything - even peak emergence?!
-
-Emergence_End <- lmer(data = temporal_data, 
-                      last_emergence ~ 
-                        Species + 
-                        Average_Volume + 
-                        Conductivity + 
-                        PH + 
-                        Average_Temp + 
-                        Pred_Den +
-                        Veg_Cov +
-                        peak_emergence +
-                        (1|PondID))
-
-summary(Emergence_End)
-Anova(Emergence_End, type = c('3'))
-
-check_model(Emergence_End)
-check_normality(Emergence_End)  # Tests if residuals are normally distributed
-check_heteroscedasticity(Emergence_End)  # Checks if residual variance is consistent
-check_collinearity(Emergence_End)
-check_outliers(Emergence_End)
-vif(Emergence_End)
+                         PondID +
+                        (1|Year))
 
 
-temp_weight <- ggplot(data = full_dataset, aes(x = Average_Temp, y =Weight)) +
-  geom_point() +
-  geom_smooth(method = "gam", formula = y ~ s(x), color = "red") +
-  facet_wrap(~Pred_Den) +
-  theme_bw() + 
-  theme(axis.title.x = element_text(size = 14),
-        axis.title.y = element_text(size = 14)) +
-  xlab("Average temperature")
+summary(EmergencePeak_N)
+Anova(EmergencePeak_N, type = c('2'))
 
-temp_weight
+check_normality(EmergencePeak_N)  # Tests if residuals are normally distributed
+check_heteroscedasticity(EmergencePeak_N)  # Checks if residual variance is consistent
+sim_res <- simulateResiduals(EmergencePeak_N)
+plot(sim_res)
+plot(EmergencePeak_N)      # residuals vs fitted
+qqnorm(resid(EmergencePeak_N))
+qqline(resid(EmergencePeak_N))
+check_collinearity(EmergencePeak_N)
+check_outliers(EmergencePeak_N)
 
-size_weight <- ggplot(data = full_dataset, aes(x = log10(Average_Volume), y =Weight)) +
-  geom_point() +
-  #  geom_smooth(method = "lm") +
-  theme_bw() + 
-  theme(axis.title.x = element_text(size = 14),
-        axis.title.y = element_text(size = 14)) +
-  xlab("log(Pond volume)")
+#Habitat and PH important!
 
-size_weight
+#Impiger has too little data to make any good models
+#We can't really trust end emergence or start emergence so those are skipped
 
-ggsave("temp_weight.TIFF", plot = temp_weight, width = 8, height = 4)
-getwd()
+ggplot() +
+  geom_boxplot(data = full_dataset_N, aes(x = as.factor(PondID), y = Wing_Length))
 
-ggsave("size_weight.TIFF", plot = size_weight, width = 8, height = 4)
-getwd()
+ggplot()+
+  geom_boxplot(data = full_dataset_N, aes(x = as.factor(PondID), y = Body_Length))
