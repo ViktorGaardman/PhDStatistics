@@ -188,10 +188,29 @@ Base_ID <- Base_ID %>%
 
 Bird_ID <- Base_ID %>%
   filter(Group == "Bird") %>%
-  select(ID, Species) %>%
+  select(ID, Species, Month) %>%
   rename(
     Sample = ID,
-    Genus   = Species
+    Family   = Species,
+    Month = Month
+  )
+
+
+Insect_ID <- Insect_ID %>%
+  mutate(
+    Date = str_pad(Date, width = 6, side = "left", pad = "0")  # make all dates 6 digits
+  )
+
+# Create month column
+Insect_ID <- Insect_ID %>%
+  mutate(
+    Month = str_sub(Date, 3, 4),  # extract MM from DDMMYY
+    Month = case_when(
+      Month == "06" ~ "June",
+      Month == "07" ~ "July",
+      Month %in% c("08", "09") ~ "August",
+      TRUE ~ NA_character_  # catch other months if present
+    )
   )
 
 #Remove the bloodmeal samples for now
@@ -202,7 +221,7 @@ Insect_Filter <- Insect_ID %>%
 
 #Sum reads across remaining primers
 summed_reads <- Insect_Filter %>%
-  group_by(Sample, Family, Genus) %>%
+  group_by(Sample, Family, Genus, Month) %>%
   summarise(total_reads = sum(Count), .groups = "drop")
 
 #Identify families that cannot be predators
@@ -229,7 +248,7 @@ dominant_species <- summed_reads %>%
   group_by(Sample) %>%
   slice_max(order_by = total_reads, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
-  select(Sample, Genus)
+  select(Sample, Family, Month)
 
 #Fill in the bird samples
 
@@ -238,8 +257,51 @@ dominant_no_birds <- dominant_species %>%
 
 predator_lookup <- bind_rows(
   dominant_no_birds,
-  Bird_ID %>% select(Sample, Genus)
+  Bird_ID %>% select(Sample, Family, Month)
 )
+
+predator_lookup <- predator_lookup %>%
+  filter(!Family %in% "Unknown")
+
+#Split matrix by month
+
+make_monthly_diet_matrices <- function(diet_matrix, predator_lookup) {
+  
+  # Helper function for a single month
+  make_one_month <- function(month_name) {
+    
+    month_df <- predator_lookup %>%
+      filter(Month == month_name) %>%
+      select(Sample, Family)
+    
+    # Filter diet matrix
+    mat <- diet_matrix[, colnames(diet_matrix) %in% month_df$Sample, drop = FALSE]
+    
+    # Rename columns Sample -> Genus
+    lookup <- setNames(month_df$Family, month_df$Sample)
+    colnames(mat) <- lookup[colnames(mat)]
+    
+    return(mat)
+  }
+
+    # Create matrices
+  list(
+    June   = make_one_month("June"),
+    July   = make_one_month("July"),
+    August = make_one_month("August")
+  )
+}
+
+monthly_matrices <- make_monthly_diet_matrices(
+  diet_matrix = diet_matrix,
+  predator_lookup = predator_lookup
+)
+
+diet_june_Fam   <- monthly_matrices$June
+diet_july_Fam   <- monthly_matrices$July
+diet_august_Fam <- monthly_matrices$August
+
+
 
 #Remove the bloodmeal samples from diel matrix
 diet_matrix_clean <- diet_matrix[, colnames(diet_matrix) %in% predator_lookup$Sample]
@@ -248,7 +310,7 @@ diet_matrix_clean <- diet_matrix[, colnames(diet_matrix) %in% predator_lookup$Sa
 original_colnames <- colnames(diet_matrix_clean)
 
 #Replace names using the lookup vector
-lookup_vector <- setNames(predator_lookup$Genus, predator_lookup$Sample)
+lookup_vector <- setNames(predator_lookup$Family, predator_lookup$Sample)
 new_colnames <- lookup_vector[original_colnames]
 
 #Assign new column names (some may be NA)
@@ -262,14 +324,15 @@ if(length(na_columns) > 0){
           paste(missing_samples, collapse = ", "))
 }
 
-
-
 #No NAs - we are good to go! :D
 
-write_csv(diet_matrix_clean, "diet_matrix_renamed.csv")
+write_csv(diet_matrix_clean, "diet_matrix_Fam.csv")
+write_csv(diet_june_Fam, "diet_matrix_june_Fam.csv")
+write_csv(diet_july_Fam, "diet_matrix_july_Fam.csv")
+write_csv(diet_august_Fam, "diet_matrix_august_Fam.csv")
 
-#Add prey names to the rows
-prey_names <- prey_data$Assigned
+#Add prey names to the rows (here genera)
+prey_names <- prey_data$Family
 
 #Store original column names
 original_colnames <- colnames(diet_matrix_clean)
@@ -314,7 +377,7 @@ edgelist <- edgelist %>% filter(InteractionStrength > 0)
 head(edgelist)
 
 edgelist <- edgelist %>%
-  filter(!Predator %in% "Unknown")
+  filter(!Prey %in% "NA")
 
 # Create a new column with prey genus (everything before the first underscore)
 edgelist <- edgelist %>%
@@ -325,10 +388,69 @@ edgelist_clean <- edgelist %>%
   filter(Predator != PreyGenus) %>%  
   select(-PreyGenus)                
 
-write.csv(edgelist_clean, "edgelist_2024.csv")
+#Remove predator DNA/cannibalism (Family level)
+edgelist_clean <- edgelist %>%
+  filter(Predator != Prey)
+
+write.csv(edgelist_clean, "edgelist_2024_Fam.csv")
+
+#Monthly edgeslists
+diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
+  
+  # 1. Store original column names
+  original_colnames <- colnames(diet_matrix)
+  
+  # 2. Make column names unique internally
+  colnames(diet_matrix) <- make.unique(original_colnames, sep = "_sample_")
+  
+  # 3. Convert to long format
+  diet_long <- diet_matrix %>%
+    as.data.frame() %>%
+    mutate(Prey = prey_names) %>%
+    pivot_longer(
+      cols = -Prey,
+      names_to = "PredatorSample",
+      values_to = "Presence"
+    )
+  
+  # 4. Recover predator genus from column names
+  diet_long <- diet_long %>%
+    mutate(Predator = sub("_sample_.*", "", PredatorSample))
+  
+  # 5. Count prey occurrences per predator
+  interaction_counts <- diet_long %>%
+    group_by(Predator, Prey) %>%
+    summarise(TotalPresence = sum(Presence), .groups = "drop")
+  
+  # 6. Count number of samples per predator
+  total_samples <- diet_long %>%
+    group_by(Predator) %>%
+    summarise(TotalSamples = n_distinct(PredatorSample), .groups = "drop")
+  
+  # 7. Calculate interaction strength
+  edgelist <- interaction_counts %>%
+    left_join(total_samples, by = "Predator") %>%
+    mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
+    select(Predator, Prey, InteractionStrength) %>%
+    filter(InteractionStrength > 0)
+  
+  # 8. Remove predator DNA / cannibalism (genus-level match)
+  edgelist_clean <- edgelist %>%
+    filter(Predator != Prey)
+  
+  return(edgelist_clean)
+}
+
+edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june, prey_data$Assigned)
+edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july, prey_data$Assigned)
+edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august, prey_data$Assigned)
+
+write.csv(edgelist_june_Fam, "edgelist_june_2024_Fam.csv")
+write.csv(edgelist_july_Fam, "edgelist_july_2024_Fam.csv")
+write.csv(edgelist_august_Fam, "edgelist_august_2024_Fam.csv")
 
 ###########
-#Actual fooweb analysis!!
+#Actual foodweb analysis!!
 #Basics for presentation
 
 library(bipartite)
@@ -360,22 +482,139 @@ network_matrix <- edgelist_clean %>%
 dim(network_matrix)
 head(network_matrix)
 
-basicweb <- plotweb(
+
+png("foodweb_basic.png", width = 2000, height = 1500, res = 300)
+
+plotweb(
   network_matrix,
   srt = 45,
   text_size = 0.5,
   sorting = "dec"
 )
 
+dev.off()
 
 
-low.abun = TRUE,       # scale prey bars by total interactions
-high.abun = TRUE,      # scale predator bars by total interactions
-labsize = 0.7,         # reduce label size
-low.col = "orange",    # prey bar color
-high.col = "skyblue",  # predator bar color
-col.interaction = "gray" # links color
+edgelist_to_matrix <- function(edgelist) {
+  
+  network_matrix <- edgelist %>%
+    pivot_wider(
+      names_from  = Predator,
+      values_from = InteractionStrength,
+      values_fill = 0
+    ) %>%
+    column_to_rownames("Prey") %>%
+    as.matrix()
+  
+  return(network_matrix)
+}
+
+matrix_june   <- edgelist_to_matrix(edgelist_june)
+matrix_july   <- edgelist_to_matrix(edgelist_july)
+matrix_august <- edgelist_to_matrix(edgelist_august)
+
+library(bipartite)
+
+foodwebs <- list(
+  June   = matrix_june,
+  July   = matrix_july,
+  August = matrix_august
+)
+
+for (month in names(foodwebs)) {
+  
+  png(
+    filename = paste0("foodweb_", month, ".png"),
+    width = 2000,
+    height = 1500,
+    res = 300
+  )
+  
+  plotweb(
+    foodwebs[[month]],
+    srt = 45,
+    text_size = 0.5,
+    sorting = "dec"
+  )
+  
+  title(paste("Food web –", month))
+  
+  dev.off()
+}
+
+###Family level plots
+
+network_matrix <- edgelist_clean %>%
+  pivot_wider(
+    names_from = Predator,
+    values_from = InteractionStrength,
+    values_fill = 0
+  ) %>%
+  column_to_rownames("Prey") %>%  # rows = prey
+  as.matrix()
+
+#Add data on abundances
+Abu_Data <- read.csv("MalaiseSamples_2024.csv", sep = ";")
+
+Abu_summed <- Abu_Data %>%
+  
+  
+
+png("foodweb_basic.png", width = 2000, height = 1500, res = 300)
+
+plotweb(
+  network_matrix,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec"
+)
+
+dev.off()
 
 
+edgelist_to_matrix <- function(edgelist) {
+  
+  network_matrix <- edgelist %>%
+    pivot_wider(
+      names_from  = Predator,
+      values_from = InteractionStrength,
+      values_fill = 0
+    ) %>%
+    column_to_rownames("Prey") %>%
+    as.matrix()
+  
+  return(network_matrix)
+}
 
-#LEFTOVER CODE
+matrix_june   <- edgelist_to_matrix(edgelist_june)
+matrix_july   <- edgelist_to_matrix(edgelist_july)
+matrix_august <- edgelist_to_matrix(edgelist_august)
+
+library(bipartite)
+
+foodwebs <- list(
+  June   = matrix_june,
+  July   = matrix_july,
+  August = matrix_august
+)
+
+for (month in names(foodwebs)) {
+  
+  png(
+    filename = paste0("foodweb_", month, ".png"),
+    width = 2000,
+    height = 1500,
+    res = 300
+  )
+  
+  plotweb(
+    foodwebs[[month]],
+    srt = 45,
+    text_size = 0.5,
+    sorting = "dec"
+  )
+  
+  title(paste("Food web –", month))
+  
+  dev.off()
+}
