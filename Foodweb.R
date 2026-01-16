@@ -331,6 +331,8 @@ write_csv(diet_june_Fam, "diet_matrix_june_Fam.csv")
 write_csv(diet_july_Fam, "diet_matrix_july_Fam.csv")
 write_csv(diet_august_Fam, "diet_matrix_august_Fam.csv")
 
+diet_matrix_clean <- read.csv("diet_Matrix_Fam.csv")
+
 #Add prey names to the rows (here genera)
 prey_names <- prey_data$Family
 
@@ -441,9 +443,9 @@ diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
   return(edgelist_clean)
 }
 
-edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june, prey_data$Assigned)
-edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july, prey_data$Assigned)
-edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august, prey_data$Assigned)
+edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_data$Family)
+edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_data$Family)
+edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_data$Family)
 
 write.csv(edgelist_june_Fam, "edgelist_june_2024_Fam.csv")
 write.csv(edgelist_july_Fam, "edgelist_july_2024_Fam.csv")
@@ -454,7 +456,7 @@ write.csv(edgelist_august_Fam, "edgelist_august_2024_Fam.csv")
 #Basics for presentation
 
 library(bipartite)
-library(igraph)
+#library(igraph)
 
 #Rename columns for bipartite
 edgelist_for_bipartite <- edgelist_clean %>%
@@ -513,9 +515,18 @@ edgelist_to_matrix <- function(edgelist) {
   return(network_matrix)
 }
 
-matrix_june_Fam   <- edgelist_to_matrix(edgelist_june)
-matrix_july_Fam   <- edgelist_to_matrix(edgelist_july)
-matrix_august_Fam <- edgelist_to_matrix(edgelist_august)
+edgelist_june_Fam <- edgelist_june_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_july_Fam <- edgelist_july_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "Fringillidae")
+
+matrix_june_Fam   <- edgelist_to_matrix(edgelist_june_Fam)
+matrix_july_Fam   <- edgelist_to_matrix(edgelist_july_Fam)
+matrix_august_Fam <- edgelist_to_matrix(edgelist_august_Fam)
 
 library(bipartite)
 
@@ -546,95 +557,82 @@ for (month in names(foodwebs)) {
   dev.off()
 }
 
-###Family level plots
+######
+#BLOODMEAL SAMPLES
+#####
+#Include only bloodmeal primers
+included_primers <- c("P16S", "12S-V5")
 
-network_matrix <- edgelist_clean %>%
+Bloodmeal_filter <- Insect_ID %>%
+  filter(PrimerPair == included_primers)
+
+Bloodmeal_filter <- Bloodmeal_filter %>%
+  filter(!Order %in% "NA")
+
+#Only include bloodmeal samples from diel matrix
+diet_matrix_blood <- diet_matrix[, colnames(diet_matrix) %in% Bloodmeal_filter$Sample]
+
+##Add prey names to the rows
+prey_names_blood <- prey_data %>%
+  pull(Order)
+
+#Add prey names as a column
+diet_long_blood <- diet_matrix_blood %>%
+  as.data.frame() %>%         # ensure it's a dataframe
+  mutate(Prey = prey_names_blood) %>%
+  pivot_longer(
+    cols = -Prey,             # keep Prey column
+    names_to = "PredatorSample",
+    values_to = "Presence"
+  )
+
+#Keep only bloodmeal prey
+diet_long_blood <- diet_long_blood %>%
+  filter(Prey %in% c("Passeriformes", "Artiodactyla",
+                   "Carnivora", "Primates"))
+
+#Make all samples Aedes
+diet_long_blood <- diet_long_blood %>%
+  mutate(PredatorSample = "Aedes")
+
+#Sum presence per Predator-Prey combination
+interaction_counts <- diet_long_blood %>%
+  group_by(PredatorSample, Prey) %>%
+  summarise(TotalPresence = sum(Presence), .groups = "drop")
+
+# 3. Calculate total number of samples per predator
+total_samples <- diet_long_blood %>%
+  group_by(PredatorSample) %>%
+  summarise(TotalSamples = n(), .groups = "drop")
+
+# 4. Join totals and calculate interaction strength
+edgelist_blood <- interaction_counts %>%
+  left_join(total_samples, by = "PredatorSample") %>%
+  mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
+  select(PredatorSample, Prey, InteractionStrength)
+
+# Convert to matrix format
+network_blood <- edgelist_blood %>%
   pivot_wider(
-    names_from = Predator,
+    names_from = PredatorSample,
     values_from = InteractionStrength,
     values_fill = 0
   ) %>%
   column_to_rownames("Prey") %>%  # rows = prey
   as.matrix()
 
-#Add data on abundances
-Abu_Data <- read.csv("MalaiseSamples_2024.csv", sep = ";")
+rownames(network_blood)
+colnames(network_blood)
 
-Abu_summed <- Abu_Data %>%
-  filter(!Taxon %in% "Araneidae") %>%
-  group_by(Taxon) %>%
-  summarise(
-    Total_abundance = sum(Count),
-    .groups = "drop"
-  )
-  
-lower_abundances <- setNames(
-  Abu_summed$Total_abundance,
-  Abu_summed$Taxon
-)
+plotweb(network_blood,
+        text_size = 0.5)
 
-lower_abundances <- lower_abundances[rownames(network_matrix)]
-
-#Other taxa still there but small
-min_abun <- min(lower_abundances, na.rm = TRUE)
-
-lower_abundances[is.na(lower_abundances)] <- min_abun
-
-png("foodweb_basic_Fam.png", width = 3000, height = 1500, res = 300)
+png("bloodmeal_web.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
-  network_matrix,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec"
+  network_blood,
+  text_size = 0.5
 )
 
 dev.off()
 
-
-edgelist_to_matrix <- function(edgelist) {
-  
-  network_matrix <- edgelist %>%
-    pivot_wider(
-      names_from  = Predator,
-      values_from = InteractionStrength,
-      values_fill = 0
-    ) %>%
-    column_to_rownames("Prey") %>%
-    as.matrix()
-  
-  return(network_matrix)
-}
-
-matrix_june   <- edgelist_to_matrix(edgelist_june)
-matrix_july   <- edgelist_to_matrix(edgelist_july)
-matrix_august <- edgelist_to_matrix(edgelist_august)
-
-library(bipartite)
-
-foodwebs <- list(
-  June   = matrix_june,
-  July   = matrix_july,
-  August = matrix_august
-)
-
-for (month in names(foodwebs)) {
-  
-  png(
-    filename = paste0("foodweb_", month, ".png"),
-    width = 2000,
-    height = 1500,
-    res = 300
-  )
-  
-  plotweb(
-    foodwebs[[month]],
-    srt = 45,
-    text_size = 0.5,
-    sorting = "dec"
-  )
-  
-  title(paste("Food web –", month))
-  
-  dev.off()
-}
