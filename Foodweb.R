@@ -468,6 +468,10 @@ edgelist_for_bipartite <- edgelist_clean %>%
 weblist <- frame2webs(edgelist_for_bipartite, 
                       varnames = c("higher", "lower", "freq"))
 
+edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+
 # Convert long edgelist to matrix format
 network_matrix <- edgelist_clean %>%
   pivot_wider(
@@ -483,7 +487,7 @@ dim(network_matrix)
 head(network_matrix)
 
 
-png("foodweb_basic.png", width = 2000, height = 1500, res = 300)
+png("foodweb_basic.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
   network_matrix,
@@ -509,23 +513,23 @@ edgelist_to_matrix <- function(edgelist) {
   return(network_matrix)
 }
 
-matrix_june   <- edgelist_to_matrix(edgelist_june)
-matrix_july   <- edgelist_to_matrix(edgelist_july)
-matrix_august <- edgelist_to_matrix(edgelist_august)
+matrix_june_Fam   <- edgelist_to_matrix(edgelist_june)
+matrix_july_Fam   <- edgelist_to_matrix(edgelist_july)
+matrix_august_Fam <- edgelist_to_matrix(edgelist_august)
 
 library(bipartite)
 
 foodwebs <- list(
-  June   = matrix_june,
-  July   = matrix_july,
-  August = matrix_august
+  June   = matrix_june_Fam,
+  July   = matrix_july_Fam,
+  August = matrix_august_Fam
 )
 
 for (month in names(foodwebs)) {
   
   png(
-    filename = paste0("foodweb_", month, ".png"),
-    width = 2000,
+    filename = paste0("Fam_foodweb_", month, ".png"),
+    width = 3000,
     height = 1500,
     res = 300
   )
@@ -537,7 +541,7 @@ for (month in names(foodwebs)) {
     sorting = "dec"
   )
   
-  title(paste("Food web –", month))
+  title(paste("Fam food web –", month))
   
   dev.off()
 }
@@ -557,10 +561,26 @@ network_matrix <- edgelist_clean %>%
 Abu_Data <- read.csv("MalaiseSamples_2024.csv", sep = ";")
 
 Abu_summed <- Abu_Data %>%
+  filter(!Taxon %in% "Araneidae") %>%
+  group_by(Taxon) %>%
+  summarise(
+    Total_abundance = sum(Count),
+    .groups = "drop"
+  )
   
-  
+lower_abundances <- setNames(
+  Abu_summed$Total_abundance,
+  Abu_summed$Taxon
+)
 
-png("foodweb_basic.png", width = 2000, height = 1500, res = 300)
+lower_abundances <- lower_abundances[rownames(network_matrix)]
+
+#Other taxa still there but small
+min_abun <- min(lower_abundances, na.rm = TRUE)
+
+lower_abundances[is.na(lower_abundances)] <- min_abun
+
+png("foodweb_basic_Fam.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
   network_matrix,
