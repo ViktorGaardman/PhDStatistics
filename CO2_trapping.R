@@ -21,6 +21,25 @@ hours <- df %>%
 df <- df %>%
   filter(!is.na(Family)) %>%
   left_join(hours, by = "ID")
+df$TrapType <- as_factor(df$TrapType)
+
+df_sum <- df %>%
+  group_by(Date_Num, TrapType) %>%
+  summarise(CountPerHour = mean(CountPerHour, na.rm = TRUE), .groups = "drop")
+
+wide_df <- df_sum %>%
+  select(Date_Num, TrapType, CountPerHour) %>%
+  pivot_wider(
+    names_from = TrapType,
+    values_from = CountPerHour
+  )
+
+wide_df <- wide_df %>%
+  mutate(diff_T_vs_C =  Control - (Bait))  # or flip order
+wide_df <- wide_df %>%
+  filter(! Date_Num %in% )
+mean_diff <- mean(wide_df$diff_T_vs_C, na.rm = TRUE)
+mean_diff
 
 df_fam <- df %>%
   group_by(TrapType, Family,
@@ -328,11 +347,34 @@ mean(CO2_min$mlpermin)
 
 write.csv(CO2_min, "CO2_per_minute.csv")
 
+CO2_min <- read_csv("CO2_per_minute.csv")
+
+filter <- CO2_min %>%
+  filter(Hour == 22)
+min(filter$mlpermin)
+max(filter$mlpermin)
+mean(filter$mlpermin)
+
+#Add dummy 0s at 8:00
+CO2_plotdf <- CO2_min %>%
+  select(Hour, mlpermin)
+
+CO2_min1 <- rbind(CO2_plotdf, data.frame(Hour = 8, mlpermin = 0))
+CO2_min2 <- rbind(CO2_min1, data.frame(Hour = 8, mlpermin = 0))
+CO2_min3 <- rbind(CO2_min2, data.frame(Hour = 8, mlpermin = 0))
+CO2_min4 <- rbind(CO2_min3, data.frame(Hour = 8, mlpermin = 0))
+CO2_min5 <- rbind(CO2_min4, data.frame(Hour = 8, mlpermin = 0))
+
+CO2_plot <- CO2_min5 %>%
+  mutate(
+    HourCult = Hour - 8
+  )
+
 #Look at data
-mlpermin_plotraw <- ggplot(CO2_min, aes(x = Hour, y = mlpermin)) + 
+mlpermin_plotraw <- ggplot(CO2_plot, aes(x = HourCult, y = mlpermin)) + 
   geom_point()+
   theme_bw()+
-  xlab("Hour of day")+
+  xlab("Hours of cultivation")+
   ylab("ml CO2 / min")+
   geom_smooth(
     method = "gam",
@@ -340,7 +382,7 @@ mlpermin_plotraw <- ggplot(CO2_min, aes(x = Hour, y = mlpermin)) +
     se = FALSE,
     color = "cornflowerblue"
   ) +
-  scale_x_continuous(limits = c(9,22), n.breaks = 8)+
+  scale_x_continuous(limits = c(0,14), n.breaks = 8)+
   theme(axis.title.y = element_text(size=16),
         axis.title.x = element_text(size=16),
         axis.text = element_text(size = 14),
@@ -374,8 +416,11 @@ summary(mlmod)
 
 tempml_plot <- ggplot(CO2_min, aes(x = Temp, y = mlpermin)) + 
   theme_bw()+
-  stat_smooth(method = 'lm', color = "cornflowerblue",
-                                 fill = "cornflowerblue")+
+  stat_smooth(method = 'gam', 
+              formula = y ~ poly(x, 3),
+              se = FALSE,
+              color = "cornflowerblue"
+              )+
   geom_point()+
   xlab("Temperature (°C)")+
   ylab("ml CO2 / min")+
@@ -391,3 +436,28 @@ tempml_plot
 
 ggsave(plot = tempml_plot, filename = "Temp_CO2.TIFF",
        dpi = 300, height = 3.5, width = 6.5)
+
+temptime_plot <- ggplot(CO2_min, aes(x = Hour, y = Temp)) + 
+  theme_bw()+
+  stat_smooth(method = 'gam', 
+              formula = y ~ poly(x, 3),
+              se = FALSE,
+              color = "cornflowerblue"
+  )+
+  geom_point()+
+  xlab("Hour of day")+
+  ylab("Temperature (°C)")+
+  scale_x_continuous(limits = c(9,22), n.breaks = 8)+
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=16),
+        axis.title.x = element_text(size=16),
+        axis.text = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+
+temptime_plot
+
+ggsave(plot = temptime_plot, filename = "Temp_Time.TIFF",
+       dpi = 300, height = 3.5, width = 6.5)
+
+head(CO2_min)
