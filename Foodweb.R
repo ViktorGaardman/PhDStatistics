@@ -152,9 +152,6 @@ ggsave(plot = total_abu, filename = "total_abundance.jpg", width = 6.5,
 ###############
 #NETWORK
 ##############
-#PossiblePackages
-#library(cheddar) Load from Git
-#library(enaR) Load from Git
 
 library(readxl)
 library(readr)
@@ -381,14 +378,17 @@ head(edgelist)
 edgelist <- edgelist %>%
   filter(!Prey %in% "NA")
 
-# Create a new column with prey genus (everything before the first underscore)
 edgelist <- edgelist %>%
-  mutate(PreyGenus = sub("_.*", "", Prey))
+  filter(!Prey %in% "Fringillidae")
+
+# Create a new column with prey genus (everything before the first underscore)
+#edgelist <- edgelist %>%
+#  mutate(PreyGenus = sub("_.*", "", Prey))
 
 #Remove predator DNA/cannibalism
-edgelist_clean <- edgelist %>%
-  filter(Predator != PreyGenus) %>%  
-  select(-PreyGenus)                
+#edgelist_clean <- edgelist %>%
+#  filter(Predator != Prey) %>%  
+#  select(-Prey)                
 
 #Remove predator DNA/cannibalism (Family level)
 edgelist_clean <- edgelist %>%
@@ -436,7 +436,7 @@ diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
     select(Predator, Prey, InteractionStrength) %>%
     filter(InteractionStrength > 0)
   
-  # 8. Remove predator DNA / cannibalism (genus-level match)
+  # 8. Remove predator DNA / cannibalism (family-level match)
   edgelist_clean <- edgelist %>%
     filter(Predator != Prey)
   
@@ -451,24 +451,26 @@ write.csv(edgelist_june_Fam, "edgelist_june_2024_Fam.csv")
 write.csv(edgelist_july_Fam, "edgelist_july_2024_Fam.csv")
 write.csv(edgelist_august_Fam, "edgelist_august_2024_Fam.csv")
 
+
+
+
 ###########
 #Actual foodweb analysis!!
 #Basics for presentation
 
 library(bipartite)
-#library(igraph)
 
 #Rename columns for bipartite
-edgelist_for_bipartite <- edgelist_clean %>%
-  rename(
-    higher = Predator,  # predator
-    lower  = Prey,      # prey
-    freq   = InteractionStrength
-  )
+#edgelist_for_bipartite <- edgelist_clean %>%
+#  rename(
+#    higher = Predator,  # predator
+#    lower  = Prey,      # prey
+#    freq   = InteractionStrength
+#  )
 
 
-weblist <- frame2webs(edgelist_for_bipartite, 
-                      varnames = c("higher", "lower", "freq"))
+#weblist <- frame2webs(edgelist_for_bipartite, 
+#                      varnames = c("higher", "lower", "freq"))
 
 edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
 
@@ -483,6 +485,8 @@ network_matrix <- edgelist_clean %>%
   ) %>%
   column_to_rownames("Prey") %>%  # rows = prey
   as.matrix()
+
+
 
 # Check
 dim(network_matrix)
@@ -556,6 +560,29 @@ for (month in names(foodwebs)) {
   
   dev.off()
 }
+
+#We should take prey eating prey into account, but 
+#not enough data for that yet I would say
+#Ignore it for now and calculate some basic metrics
+
+#Degree
+
+#Dependence
+
+#Species strength
+strength(network_matrix, type = "Bascompte")
+
+#Modularity
+
+
+
+
+
+
+
+
+
+
 
 ######
 #BLOODMEAL SAMPLES
@@ -635,4 +662,105 @@ plotweb(
 )
 
 dev.off()
+
+#####################
+
+#Tri-trophic network visualization
+library(igraph)
+library(tidygraph)
+library(ggraph)
+
+edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+
+
+#Create basic graph
+#Add the interactions
+g <- graph_from_data_frame(
+  edgelist_clean,
+  directed = TRUE,
+  vertices = unique(c(edgelist_clean$Predator, edgelist_clean$Prey))
+)
+
+#Add interaction strength as weights
+E(g)$weight <- edgelist_clean$InteractionStrength
+
+#Check if it worked
+g
+is_weighted(g)
+
+#Weighted degree metrics
+strength_in  <- strength(g, mode = "in",  weights = E(g)$weight)
+strength_out <- strength(g, mode = "out", weights = E(g)$weight)
+
+#Add trophic level to each predator and prey
+A <- as_adjacency_matrix(g, attr = "weight", sparse = FALSE)
+
+# Normalize rows to diet proportions
+P <- A / rowSums(A)
+P[is.na(P)] <- 0
+
+n <- nrow(P)
+I <- diag(n)
+
+TL <- solve(I - P, rep(1, n))
+names(TL) <- V(g)$name
+
+V(g)$trophic_level <- TL
+
+summary(V(g)$trophic_level)
+
+#Define three trophic levels
+V(g)$trophic_class <- cut(
+  V(g)$trophic_level,
+  breaks = c(-Inf, 1.5, 3.5, Inf),
+  labels = c("Basal", "Intermediate", "Top")
+)
+
+
+
+table(V(g)$trophic_class)
+tapply(V(g)$trophic_level, V(g)$trophic_class, range)
+
+V(g)$rank <- as.numeric(V(g)$trophic_class)
+V(g)$rank
+
+#Plot using tidygraph and ggraph
+lay <- layout_with_sugiyama(
+  g,
+  layers = V(g)$rank,
+  reorder = TRUE,  # reorders nodes horizontally for fewer crossings
+  hgap = 2,   # horizontal gap between nodes
+  vgap = 3    # vertical gap between layers
+)
+
+V(g)$trophic_level[V(g)$name %in% c("Snow bunting", "Lapland bunting",
+                                    "Wheatear")] <- max(V(g)$trophic_level) + 0.1
+
+tg <- as_tbl_graph(g)
+
+ggraph(tg, layout = "manual",
+       x = lay$layout[,1],
+       y = -lay$layout[,2]) +   # top predators are at the top
+  geom_edge_link(aes(width = weight), alpha = 0.6) +
+  geom_node_text(aes(label = name, color = trophic_class), size = 3, repel = TRUE) +
+  scale_edge_width(range = c(0.3, 2)) +
+  theme_graph(base_family = "Arial")
+
+species_trophic <- data.frame(
+  Species = V(g)$name,
+  TrophicLevel = V(g)$trophic_level
+)
+
+species_trophic
+
+
+# Show TL and prey of a species
+data.frame(
+  Species = V(g)$name,
+  TrophicLevel = V(g)$trophic_level,
+  PreyCount = degree(g, mode = "out"),
+  PredatorCount = degree(g, mode = "in")
+)
 
