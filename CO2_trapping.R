@@ -34,13 +34,6 @@ wide_df <- df_sum %>%
     values_from = CountPerHour
   )
 
-wide_df <- wide_df %>%
-  mutate(diff_T_vs_C =  Control - (Bait))  # or flip order
-wide_df <- wide_df %>%
-  filter(! Date_Num %in% )
-mean_diff <- mean(wide_df$diff_T_vs_C, na.rm = TRUE)
-mean_diff
-
 df_fam <- df %>%
   group_by(TrapType, Family,
            Date_Num) %>%
@@ -48,15 +41,15 @@ df_fam <- df %>%
     SumCountHour = sum(CountPerHour)
   )
 
-df_fam <- df_fam %>%
-  filter(!Date_Num %in% "")
 
 raw_boxplot <- ggplot(df_fam, aes(x = TrapType, y = SumCountHour, color=
                                          Family)) +
   geom_boxplot(position = position_dodge(width = 0.75)) +
   geom_point(position = position_dodge(width = 0.75)) +
   theme_bw()+
+  scale_color_manual(values = c("firebrick", "goldenrod")) +
   ylab("Capture per hour")+
+  scale_y_continuous(limits = c(0,20)) +
   theme(legend.text = element_text(size = 14),
         legend.title = element_text(size = 16),
     axis.title.x = element_blank(),
@@ -71,7 +64,7 @@ raw_boxplot <- ggplot(df_fam, aes(x = TrapType, y = SumCountHour, color=
 raw_boxplot
 
 ggsave(plot= raw_boxplot, filename = "Attractant_boxplot.TIFF",
-       dpi = 300, width = 6.5, height = 3.5)
+       dpi = 450, width = 6.5, height = 3.5)
 
 df_tot <- df_fam %>%
   group_by(Family,
@@ -86,24 +79,24 @@ time_plot <- ggplot(df_tot, aes(x = Date_Num, y = TotalCount,
               se = FALSE, 
               aes(color = Family)) +
   geom_point() +
+  ylab("Total captures")+
+  xlab("DOY")+
+  scale_color_manual(values = c("firebrick", "goldenrod")) +
   theme_bw()+
-  ylab("Capture per hour")+
-  scale_y_continuous(limits = c(0,70))+
   theme(legend.position="right",
         legend.text=element_text(size=14),
         legend.title=element_text(size=16),
-        legend.direction='vertical',axis.title.x = element_blank(),
+        legend.direction='vertical',
         axis.title.y = element_text(size=16),
+        axis.title.x =element_text(size = 16),
         axis.text = element_text(size = 14),
-        strip.text = element_text(size=16),
         panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank(),
-        plot.title = element_text(size = 18, hjust = 0.5)) 
+        panel.grid.major = element_blank()) 
 
 time_plot
 
 ggsave(plot = time_plot, filename = "Capture_time.TIFF",
-       dpi = 300, height = 3.5, width = 6.5)
+       dpi = 450, height = 3.5, width = 6.5)
 
 type3 <- list(TrapType = contr.sum, Family = contr.sum)
 
