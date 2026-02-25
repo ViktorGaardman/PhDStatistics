@@ -335,6 +335,14 @@ write.csv(edgelist_august_Fam, "edgelist_august_2024_Fam.csv")
 #Actual foodweb analysis!!
 
 edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
+edgelist_june_Fam <- read.csv("edgelist_june_2024_Fam.csv")
+edgelist_july_Fam <- read.csv("edgelist_July_2024_Fam.csv")
+edgelist_august_Fam <- read.csv("edgelist_august_2024_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+edgelist_june_Fam <- edgelist_june_Fam[,2:4]
+edgelist_july_Fam <- edgelist_july_Fam[,2:4]
+edgelist_august_Fam <- edgelist_august_Fam[,2:4]
 
 # Convert long edgelist to matrix format
 network_matrix <- edgelist_clean %>%
@@ -364,6 +372,7 @@ plotweb(
 
 dev.off()
 
+#Monthly
 
 edgelist_to_matrix <- function(edgelist) {
   
@@ -392,6 +401,19 @@ matrix_june_Fam   <- edgelist_to_matrix(edgelist_june_Fam)
 matrix_july_Fam   <- edgelist_to_matrix(edgelist_july_Fam)
 matrix_august_Fam <- edgelist_to_matrix(edgelist_august_Fam)
 
+plotweb(
+  matrix_june_Fam,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  curved_links = TRUE
+)
+
+visweb(
+  matrix_june_Fam
+)
+
+
 foodwebs <- list(
   June   = matrix_june_Fam,
   July   = matrix_july_Fam,
@@ -419,7 +441,144 @@ for (month in names(foodwebs)) {
   dev.off()
 }
 
-#Divide into birds, scatophagids, and spiders.
+
+#Weighted analyses
+#1. Load malaise and pitfall data
+flyingprey <- read.csv("FlyingAbundances2024_edit.csv", sep = ";")
+groundprey <- read.csv("Pitfall2024_edited.csv", sep = ";")
+groundprey <- groundprey[,1:5]
+
+flying_prey_june <- flyingprey %>%
+  filter(Month == "June")
+
+ground_prey_june <- groundprey %>%
+  filter(Month == "6")
+
+flying_prey_june_matrix <- flying_prey_june %>%
+  select(Taxon, Total) %>%
+  pivot_wider(
+    names_from = Taxon,
+    values_from = Total,
+    values_fill = 0
+  ) %>%
+  as.matrix()
+
+#Drop flying arthropods from pitfall traps
+ground_prey_june <- ground_prey_june %>%
+  filter(!Family %in% c("Scelionidae", "Ichneumonidae",
+         "Syrphidae", "Sciaridae", "Phoridae",
+         "Muscidae", "Chironomidae", "Anthomyiidae",
+         "Psylloidea", "Coccoidea", "Aphidoidea"))
+
+
+
+ground_prey_june_matrix <- ground_prey_june %>%
+  select(Family, Count) %>%
+  pivot_wider(
+    names_from = Family,
+    values_from = Count,
+    values_fill = 0
+  ) %>%
+  as.matrix()
+
+#2. Split diet into ground dwelling prey and flying prey
+edgelist_june_flying <- edgelist_june_Fam %>%
+  filter(Prey %in% c("Braconidae", "Chironomidae", "Ichneumonidae",
+         "Noctuidae", "Vespidae", "Culicidae"))
+
+edgelist_june_ground <- edgelist_june_Fam %>%
+  filter(!Prey %in% c("Braconidae", "Chironomidae", "Ichneumonidae",
+                     "Noctuidae", "Vespidae", "Culicidae"))
+
+matrix_june_flying <- edgelist_to_matrix(edgelist_june_flying)
+matrix_june_ground <- edgelist_to_matrix(edgelist_june_ground)
+
+# Transpose your matrix so predators are rows and prey are columns
+matrix_june_flying_transposed <- t(matrix_june_flying)
+matrix_june_ground_transposed <- t(matrix_june_ground)
+
+# Subset flying_prey_june_matrix to only include prey in matrix_june_flying
+flying_prey_june_matrix2 <- flying_prey_june_matrix[, colnames(matrix_june_flying_transposed)]
+ground_prey_june_matrix2 <- ground_prey_june_matrix[, colnames(matrix_june_ground_transposed)]
+
+flying_prey_june_matrix2 <- matrix(flying_prey_june_matrix2, nrow = 1)
+colnames(flying_prey_june_matrix2) <- colnames(matrix_june_flying_transposed)
+
+ground_prey_june_matrix2 <- matrix(ground_prey_june_matrix2, nrow = 1)
+colnames(ground_prey_june_matrix2) <- colnames(matrix_june_ground_transposed)
+
+# Get prey names in each matrix
+prey_in_matrix <- colnames(flying_prey_june_matrix2)
+prey_in_abundance <- colnames(flying_prey_june_matrix)
+
+prey_in_matrix_g <- colnames(ground_prey_june_matrix2)
+prey_in_abundance_g <- colnames(ground_prey_june_matrix)
+
+
+# Find prey in abundance but not in matrix
+missing_prey <- setdiff(prey_in_abundance, prey_in_matrix)
+missing_prey_g <- setdiff(prey_in_abundance_g, prey_in_matrix_g)
+
+# Print the result
+print(missing_prey)
+print(missing_prey_g)
+
+# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
+new_prey <- c("Anthomyiidae", "Calliophoridae", "Mycetophilidae",
+              "Phoridae", "Scathophagidae", "Syrphidae", "Encyrtidae",
+              "Geometridae")  # names of prey not in diet
+matrix_june_flying_expanded <- cbind(matrix_june_flying_transposed,
+                                     matrix(0, nrow = nrow(matrix_june_flying_transposed),
+                                            ncol = length(new_prey),
+                                            dimnames = list(rownames(matrix_june_flying_transposed), new_prey)))
+
+matrix_june_flying_expanded_t <- t(matrix_june_flying_expanded)
+
+# Get the column names of the expanded matrix (prey)
+prey_order <- rownames(matrix_june_flying_expanded_t)
+
+# Reorder flying_prey_june_matrix to match
+flying_prey_june_ordered <- flying_prey_june_matrix[, prey_order]
+
+# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
+new_prey_g <- c("Linyphiidae", "Coccinellidae", "Thysanoptera")  # names of prey not in diet
+matrix_june_ground_expanded <- cbind(matrix_june_ground_transposed,
+                                     matrix(0, nrow = nrow(matrix_june_ground_transposed),
+                                            ncol = length(new_prey_g),
+                                            dimnames = list(rownames(matrix_june_ground_transposed), new_prey_g)))
+
+matrix_june_ground_expanded_t <- t(matrix_june_ground_expanded)
+
+# Get the column names of the expanded matrix (prey)
+prey_order_g <- rownames(matrix_june_ground_expanded_t)
+
+# Reorder flying_prey_june_matrix to match
+ground_prey_june_ordered <- ground_prey_june_matrix[, prey_order_g]
+
+
+plotweb(
+  matrix_june_flying_expanded_t,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  curved_links = TRUE,
+  lower_abundances = flying_prey_june_ordered
+)
+
+plotweb(
+  matrix_june_ground_expanded_t,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  curved_links = TRUE,
+  lower_abundances = ground_prey_june_ordered
+)
+
+###JULY
+
+
+
+#Divide into birds, dungflies, and spiders.
 
 
 
