@@ -490,6 +490,7 @@ edgelist_june_ground <- edgelist_june_Fam %>%
   filter(!Prey %in% c("Braconidae", "Chironomidae", "Ichneumonidae",
                      "Noctuidae", "Vespidae", "Culicidae"))
 
+matrix_june <- edgelist_to_matrix(edgelist_june_Fam)
 matrix_june_flying <- edgelist_to_matrix(edgelist_june_flying)
 matrix_june_ground <- edgelist_to_matrix(edgelist_june_ground)
 
@@ -555,6 +556,54 @@ prey_order_g <- rownames(matrix_june_ground_expanded_t)
 # Reorder flying_prey_june_matrix to match
 ground_prey_june_ordered <- ground_prey_june_matrix[, prey_order_g]
 
+#Add color to Culicidae
+lower_color <- rep("grey20", nrow(matrix_june_flying_expanded_t))
+names(lower_color) <- rownames(matrix_june_flying_expanded_t)
+lower_color["Culicidae"] <- "goldenrod"
+
+#Add sample size of predators
+sample_size <- read.csv("SampleSizePred2024.csv", sep = ";")
+colnames(sample_size) <- gsub("\\.", " ", colnames(sample_size))
+
+sample_size_june <- sample_size %>%
+  filter(Month == "June")
+sample_size_june <- sample_size_june[,2:13]
+
+sample_size_july <- sample_size %>%
+  filter(Month == "July")
+sample_size_july <- sample_size_july[,2:13]
+
+sample_size_aug <- sample_size %>%
+  filter(Month == "August")
+sample_size_aug <- sample_size_aug[,2:13]
+
+predator_order_june <- colnames(matrix_june_flying_expanded_t)
+sample_size_june_ord <- sample_size_june[, predator_order_june, drop = FALSE]
+
+#Extract row values as a vector
+higher_abundances <- as.numeric(sample_size_june_ord[1, ])
+names(higher_abundances) <- colnames(sample_size_june_ord)
+
+#Add color to Culicidae
+lower_color <- rep("grey20", nrow(matrix_june_flying_expanded_t))
+names(lower_color) <- rownames(matrix_june_flying_expanded_t)
+lower_color["Culicidae"] <- "goldenrod"
+
+png("foodweb_june_24.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  matrix_june,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+#  curved_links = TRUE,
+#  lower_color = lower_color,
+#  link_color = "lower"
+)
+dev.off()
+
+
+png("foodweb_june_flying_2024.png", width = 3000, height = 1000, res = 300)
 
 plotweb(
   matrix_june_flying_expanded_t,
@@ -562,8 +611,22 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-  lower_abundances = flying_prey_june_ordered
+  lower_abundances = flying_prey_june_ordered,
+#  higher_abundances = higher_abundances,
+  lower_color = lower_color,
+  link_color = "lower"
 )
+
+dev.off()
+
+predator_order_june_g <- colnames(matrix_june_ground_expanded_t)
+sample_size_june_ord_g <- sample_size_june[, predator_order_june_g, drop = FALSE]
+
+
+higher_abundances_june_g <- as.numeric(sample_size_june_ord_g[1, ])
+names(higher_abundances_june_g) <- colnames(sample_size_june_ord_g)
+
+png("foodweb_june_ground_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
   matrix_june_ground_expanded_t,
@@ -571,8 +634,11 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
+#  higher_abundances = higher_abundances_june_g,
   lower_abundances = ground_prey_june_ordered
 )
+
+dev.off()
 
 ###JULY
 flying_prey_july <- flyingprey %>%
@@ -698,6 +764,20 @@ prey_order_july_g <- rownames(matrix_july_ground_expanded_t)
 # Reorder flying_prey_june_matrix to match
 ground_prey_july_ordered <- ground_prey_july_matrix[, prey_order_july_g]
 
+predator_order_july <- colnames(matrix_july_flying_expanded_t)
+sample_size_july_ord <- sample_size_july[, predator_order_july, drop = FALSE]
+
+#Extract row values as a vector
+higher_abundances <- as.numeric(sample_size_july_ord[1, ])
+names(higher_abundances) <- colnames(sample_size_july_ord)
+
+#Add color to mosquitoes and blackflies
+lower_color_jul <- rep("grey20", nrow(matrix_july_flying_expanded_t))
+names(lower_color_jul) <- rownames(matrix_july_flying_expanded_t)
+lower_color_jul["Culicidae"] <- "goldenrod"
+lower_color_jul["Simuliidae"] <- "firebrick"
+
+png("foodweb_july_flying_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
   matrix_july_flying_expanded_t,
@@ -705,8 +785,24 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-  lower_abundances = flying_prey_july_ordered
+  lower_abundances = flying_prey_july_ordered,
+#  higher_abundances = higher_abundances,
+  lower_color = lower_color_jul,
+  link_color = "lower"
 )
+
+dev.off()
+
+
+predator_order_july_g <- colnames(matrix_july_ground_expanded_t)
+sample_size_july_ord_g <- sample_size_july[, predator_order_july_g, drop = FALSE]
+
+
+higher_abundances_july_g <- as.numeric(sample_size_july_ord_g[1, ])
+names(higher_abundances_july_g) <- colnames(sample_size_july_ord_g)
+
+
+png("foodweb_july_ground_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
   matrix_july_ground_expanded_t,
@@ -717,7 +813,9 @@ plotweb(
   lower_abundances = ground_prey_july_ordered
 )
 
-###JULY
+dev.off()
+
+###August
 flying_prey_aug <- flyingprey %>%
   filter(Month == "August")
 
@@ -849,6 +947,13 @@ prey_order_aug_g <- rownames(matrix_aug_ground_expanded_t)
 # Reorder flying_prey_june_matrix to match
 ground_prey_aug_ordered <- ground_prey_aug_matrix[, prey_order_aug_g]
 
+#Add color to mosquitoes and blackflies
+lower_color_aug <- rep("grey20", nrow(matrix_aug_flying_expanded_t))
+names(lower_color_aug) <- rownames(matrix_aug_flying_expanded_t)
+lower_color_aug["Culicidae"] <- "goldenrod"
+lower_color_aug["Simuliidae"] <- "firebrick"
+
+png("foodweb_aug_flying_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
   matrix_aug_flying_expanded_t,
@@ -856,8 +961,14 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-  lower_abundances = flying_prey_aug_ordered
+  lower_abundances = flying_prey_aug_ordered,
+  lower_color = lower_color_aug,
+  link_color = "lower"
 )
+
+dev.off()
+
+png("foodweb_aug_ground_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
   matrix_aug_ground_expanded_t,
@@ -868,6 +979,8 @@ plotweb(
   lower_abundances = ground_prey_aug_ordered
 )
 
+dev.off()
+
 #Divide into birds, dungflies, and spiders.
 
 
@@ -877,6 +990,7 @@ plotweb(
 #Ignore it for now and calculate some basic metrics
 
 #Degree
+
 
 #Dependence
 
