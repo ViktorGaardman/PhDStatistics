@@ -2,6 +2,8 @@ library(readxl)
 library(readr)
 library(tidyverse)
 library(bipartite)
+library(patchwork)
+library(forcats)
 
 rm(list = ls())
 
@@ -447,9 +449,19 @@ for (month in names(foodwebs)) {
 flyingprey <- read.csv("FlyingAbundances2024_edit.csv", sep = ";")
 groundprey <- read.csv("Pitfall2024_edited.csv", sep = ";")
 groundprey <- groundprey[,1:5]
+flyingprey <- flyingprey[,1:5]
+
+combinedprey <- flyingprey %>%
+  bind_rows(groundprey)
+
+combinedprey <- combinedprey %>%
+  group_by(Year, Month, Order, Family) %>%
+  summarize(
+    TCount = sum(Count)
+  )
 
 flying_prey_june <- flyingprey %>%
-  filter(Month == "June")
+  filter(Month == "6")
 
 ground_prey_june <- groundprey %>%
   filter(Month == "6")
@@ -612,7 +624,7 @@ plotweb(
   sorting = "dec",
   curved_links = TRUE,
   lower_abundances = flying_prey_june_ordered,
-#  higher_abundances = higher_abundances,
+  higher_abundances = higher_abundances,
   lower_color = lower_color,
   link_color = "lower"
 )
@@ -634,7 +646,7 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-#  higher_abundances = higher_abundances_june_g,
+  higher_abundances = higher_abundances_june_g,
   lower_abundances = ground_prey_june_ordered
 )
 
@@ -697,6 +709,7 @@ edgelist_july_ground <- edgelist_july_Fam %>%
                       "Scathophagidae", "Sciaridae", "Tachinidae",
                       "Syrphidae", "Simuliidae"))
 
+matrix_july <- edgelist_to_matrix(edgelist_july_Fam)
 matrix_july_flying <- edgelist_to_matrix(edgelist_july_flying)
 matrix_july_ground <- edgelist_to_matrix(edgelist_july_ground)
 
@@ -777,6 +790,16 @@ names(lower_color_jul) <- rownames(matrix_july_flying_expanded_t)
 lower_color_jul["Culicidae"] <- "goldenrod"
 lower_color_jul["Simuliidae"] <- "firebrick"
 
+png("foodweb_july_24.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  matrix_july,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+)
+dev.off()
+
 png("foodweb_july_flying_2024.png", width = 3000, height = 1250, res = 300)
 
 plotweb(
@@ -786,7 +809,7 @@ plotweb(
   sorting = "dec",
   curved_links = TRUE,
   lower_abundances = flying_prey_july_ordered,
-#  higher_abundances = higher_abundances,
+  higher_abundances = higher_abundances,
   lower_color = lower_color_jul,
   link_color = "lower"
 )
@@ -810,7 +833,8 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-  lower_abundances = ground_prey_july_ordered
+  lower_abundances = ground_prey_july_ordered,
+  higher_abundances = higher_abundances_july_g
 )
 
 dev.off()
@@ -871,6 +895,7 @@ edgelist_aug_ground <- edgelist_august_Fam %>%
                       "Ichneumonidae", "Empididae", 
                       "Scathophagidae","Simuliidae"))
 
+matrix_aug <- edgelist_to_matrix(edgelist_august_Fam)
 matrix_aug_flying <- edgelist_to_matrix(edgelist_aug_flying)
 matrix_aug_ground <- edgelist_to_matrix(edgelist_aug_ground)
 
@@ -948,10 +973,31 @@ prey_order_aug_g <- rownames(matrix_aug_ground_expanded_t)
 ground_prey_aug_ordered <- ground_prey_aug_matrix[, prey_order_aug_g]
 
 #Add color to mosquitoes and blackflies
-lower_color_aug <- rep("grey20", nrow(matrix_aug_flying_expanded_t))
-names(lower_color_aug) <- rownames(matrix_aug_flying_expanded_t)
+lower_color_aug <- rep("grey20", nrow(matrix_aug))
+names(lower_color_aug) <- rownames(matrix_aug)
 lower_color_aug["Culicidae"] <- "goldenrod"
 lower_color_aug["Simuliidae"] <- "firebrick"
+
+predator_order_aug <- colnames(matrix_aug_flying_expanded_t)
+sample_size_aug_ord <- sample_size_aug[, predator_order_aug, drop = FALSE]
+
+#Extract row values as a vector
+higher_abundances_aug <- as.numeric(sample_size_aug_ord[1, ])
+names(higher_abundances_aug) <- colnames(sample_size_aug_ord)
+
+png("foodweb_aug_2024.png", width = 3000, height = 1250, res = 300)
+
+plotweb(
+  matrix_aug,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  curved_links = TRUE,
+  lower_color = lower_color_aug,
+  link_color = "lower",
+)
+
+dev.off()
 
 png("foodweb_aug_flying_2024.png", width = 3000, height = 1250, res = 300)
 
@@ -963,10 +1009,18 @@ plotweb(
   curved_links = TRUE,
   lower_abundances = flying_prey_aug_ordered,
   lower_color = lower_color_aug,
-  link_color = "lower"
+  link_color = "lower",
+  higher_abundances = higher_abundances_aug
 )
 
 dev.off()
+
+predator_order_aug_g <- colnames(matrix_aug_ground_expanded_t)
+sample_size_aug_ord_g <- sample_size_aug[, predator_order_aug_g, drop = FALSE]
+
+#Extract row values as a vector
+higher_abundances_aug_g <- as.numeric(sample_size_aug_ord_g[1, ])
+names(higher_abundances_aug_g) <- colnames(sample_size_aug_ord_g)
 
 png("foodweb_aug_ground_2024.png", width = 3000, height = 1250, res = 300)
 
@@ -976,29 +1030,292 @@ plotweb(
   text_size = 0.5,
   sorting = "dec",
   curved_links = TRUE,
-  lower_abundances = ground_prey_aug_ordered
+  lower_abundances = ground_prey_aug_ordered,
+  higher_abundances = higher_abundances_aug_g
 )
 
 dev.off()
 
-#Divide into birds, dungflies, and spiders.
+#VISPLOTS
 
+matrix_july_t <- t(matrix_july)
+visweb(
+   matrix_july_t
+)
 
 
 #We should take prey eating prey into account, but 
 #not enough data for that yet I would say
 #Ignore it for now and calculate some basic metrics
 
-#Degree
+#Species indices
+
+sp_ind_june <- specieslevel(
+  matrix_june
+)
+lower_june <- sp_ind_june[["lower level"]]
+lower_june <- lower_june %>%
+  mutate(Month = "June")
+lower_june <- lower_june %>%
+  rownames_to_column(var = "Family")
+
+higher_june <- sp_ind_june[["higher level"]]
+higher_june <- higher_june %>%
+  mutate(Month = "June")
+higher_june <- higher_june %>%
+  rownames_to_column(var = "Family")
+
+sp_ind_july <- specieslevel(
+  matrix_july
+)
+lower_july <- sp_ind_july[["lower level"]]
+lower_july <- lower_july %>%
+  mutate(Month = "July")
+lower_july <- lower_july %>%
+  rownames_to_column(var = "Family")
+
+higher_july <- sp_ind_july[["higher level"]]
+higher_july <- higher_july %>%
+  mutate(Month = "July")
+higher_july <- higher_july %>%
+  rownames_to_column(var = "Family")
+
+sp_ind_aug <- specieslevel(
+  matrix_aug
+)
+lower_aug <- sp_ind_aug[["lower level"]]
+lower_aug <- lower_aug %>%
+  mutate(Month = "August")
+lower_aug <- lower_aug %>%
+  rownames_to_column(var = "Family")
+
+higher_aug <- sp_ind_aug[["higher level"]]
+higher_aug <- higher_aug %>%
+  mutate(Month = "August")
+higher_aug <- higher_aug %>%
+  rownames_to_column(var = "Family")
 
 
-#Dependence
+#Combine low
+lower_com <- lower_june %>%
+  bind_rows(lower_july) %>%
+  bind_rows(lower_aug)
 
-#Species strength
-strength(network_matrix, type = "Bascompte")
+lower_com$Month <- factor(lower_com$Month, levels = c("June", "July", "August"))
 
-#Modularity
+#combine high
+higher_com <- higher_june %>%
+  bind_rows(higher_july) %>%
+  bind_rows(higher_aug)
+higher_com$Month <- factor(higher_com$Month, levels = c("June", "July", "August"))
 
+#Species indices to use for prey
+#Degree (number of links)
+#Species strength (the sum of interaction strengths in all links)
+lower_june$Family <- factor(lower_june$Family,
+                            levels = c("Chironomidae", "Culicidae",
+                                       "Lycosidae", "Araneidae",
+                                       "Dytiscidae", "Thomisidae",
+                                       "Philodromidae", "Noctuidae",
+                                       "Phalangiidae", "Carabidae",
+                                       "Braconidae", "Gnaphosidae",
+                                       "Byrrhidae", "Curculionidae",
+                                       "Ichneumonidae", "Vespidae"))
+
+degree_june <- ggplot(lower_june, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  ylab("Degree") +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_july$Family <- factor(lower_july$Family,
+                           levels = c("Chironomidae", "Dytiscidae" ,
+                                      "Lycosidae", "Araneidae", 
+                                      "Geometridae", "Philodromidae",
+                                      "Thomisidae", "Scathophagidae",
+                                      "Simuliidae", "Phalangiidae",
+                                       "Noctuidae","Syrphidae", 
+                                      "Empididae", "Curculionidae",
+                                      "Ichneumonidae", "Tachinidae",
+                                      "Anthomyiidae", "Tortricidae",
+                                      "Byrrhidae", "Tipulidae",
+                                      "Carabidae", "Culicidae",
+                                      "Gnaphosidae", "Sciaridae",
+                                      "Oribatulidae", "Linyphiidae"))
+
+degree_july <- ggplot(lower_july, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_aug$Family <- factor(lower_aug$Family,
+                            levels = c("Araneidae", "Chironomidae",
+                                       "Lycosidae", "Scathophagidae",
+                                       "Simuliidae", "Dytiscidae", "Empididae",
+                                       "Ichneumonidae"))
+
+degree_aug <- ggplot(lower_aug, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+) 
+
+lower_june$Family <- factor(lower_june$Family,
+                            levels = c("Chironomidae","Lycosidae",
+                                       "Culicidae","Araneidae",
+                                       "Thomisidae", "Dytiscidae",
+                                        "Noctuidae",
+                                       "Phalangiidae", "Philodromidae",
+                                       "Carabidae","Curculionidae",
+                                       "Braconidae", "Gnaphosidae",
+                                       "Byrrhidae", 
+                                       "Ichneumonidae", "Vespidae"))
+
+sp_strength_june <- ggplot(lower_june, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,2.6), n.breaks = 7) +
+  ylab("Species strength") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_july$Family <- factor(lower_july$Family,
+                            levels = c("Dytiscidae",  "Araneidae",
+                                       "Chironomidae", "Lycosidae",
+                                       "Thomisidae", "Scathophagidae",
+                                       "Geometridae", "Philodromidae",
+                                       "Noctuidae", "Phalangiidae",
+                                       "Syrphidae",
+                                       "Tortricidae", "Simuliidae",  
+                                       "Empididae","Byrrhidae", 
+                                       "Culicidae", "Curculionidae", 
+                                       "Anthomyiidae", 
+                                       "Tipulidae","Oribatulidae",
+                                       "Carabidae", 
+                                       "Linyphiidae",
+                                       "Gnaphosidae",
+                                       "Ichneumonidae", 
+                                       "Tachinidae","Sciaridae"
+                                       ))
+
+sp_strength_july <- ggplot(lower_july, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,2.6), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_aug$Family <- factor(lower_aug$Family,
+                           levels = c("Araneidae", "Scathophagidae",
+                                      "Chironomidae",
+                                      "Lycosidae", "Ichneumonidae", 
+                                      "Empididae",
+                                      "Simuliidae", "Dytiscidae"
+                                      ))
+
+sp_strength_aug <- ggplot(lower_aug, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,2.6), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+#Species indices to use for predators
+#Proportion generality (measure of generalist/specialist)
+
+higher_com$partner.diversity2 <- higher_com$partner.diversity + 0.01
+
+part_div <- 
+  ggplot(higher_com, aes(x = Family, y = partner.diversity2)) +
+  geom_col() +
+    theme_bw() +
+  facet_wrap(~ Month, scales = "free_x") +
+    ylab("Partner diversity") +
+    theme(legend.position="none",
+          legend.direction='vertical',
+          plot.title = element_text(size = 18, hjust = 0.5),
+          axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_blank(),
+          axis.text.y = element_text(size = 14),
+          panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          strip.text = element_text(size=16),
+          strip.background = element_rect(fill = "white", colour = "NA"))
+
+Speciesplots <- part_div/
+  (degree_june | degree_july | degree_aug) / 
+  (sp_strength_june |sp_strength_july|sp_strength_aug)
+  
+ Speciesplots 
+
+ggsave(Speciesplots, filename = "speciesind_plot.png", 
+       dpi = 450, width = 13, height = 7.64)
+
+#General network indices
+#Betweeness centrality; Modularity; Connectance
+
+library(igraph)
+
+#Do this when we have 2025 data, otherwise the dataset is too small
 
 
 #####################
