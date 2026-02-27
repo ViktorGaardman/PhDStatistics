@@ -1279,7 +1279,7 @@ sp_strength_aug <- ggplot(lower_aug, aes(x = Family, y = species.strength)) +
   ) 
 
 #Species indices to use for predators
-#Proportion generality (measure of generalist/specialist)
+#Partner diversity (measure of generalist/specialist)
 
 higher_com$partner.diversity2 <- higher_com$partner.diversity + 0.01
 
@@ -1311,11 +1311,124 @@ ggsave(Speciesplots, filename = "speciesind_plot.png",
        dpi = 450, width = 13, height = 7.64)
 
 #General network indices
-#Betweeness centrality; Modularity; Connectance
+# Modularity; Connectance
 
 library(igraph)
 
-#Do this when we have 2025 data, otherwise the dataset is too small
+edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+
+
+#Create basic graph
+g_june <- graph_from_data_frame(
+  edgelist_june_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_june_Fam$Predator, edgelist_june_Fam$Prey))
+)
+
+#Add interaction strength as weights
+E(g_june)$weight <- edgelist_june_Fam$InteractionStrength
+
+#Check if it worked
+g_june
+is_weighted(g_june)
+
+#Repeat for July and August
+g_july <- graph_from_data_frame(
+  edgelist_july_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_july_Fam$Predator, edgelist_july_Fam$Prey))
+)
+
+E(g_july)$weight <- edgelist_july_Fam$InteractionStrength
+
+g_aug <- graph_from_data_frame(
+  edgelist_august_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_august_Fam$Predator, edgelist_august_Fam$Prey))
+)
+
+E(g_aug)$weight <- edgelist_august_Fam$InteractionStrength
+
+
+# Calculate connectance
+connectance_june <- ecount(g_june) / (vcount(g_june) * (vcount(g_june) - 1))
+connectance_july <- ecount(g_july) / (vcount(g_july) * (vcount(g_july) - 1))
+connectance_aug <- ecount(g_aug) / (vcount(g_aug) * (vcount(g_aug) - 1))
+
+# Modularity
+# Detect communities using the fast greedy algorithm
+communities_june <- cluster_optimal(g_june)
+
+# Calculate modularity
+modularity_score_june <- modularity(communities_june)
+
+communities_july <- cluster_optimal(g_july)
+
+# Calculate modularity
+modularity_score_july <- modularity(communities_july)
+
+communities_aug <- cluster_optimal(g_aug)
+
+# Calculate modularity
+modularity_score_aug <- modularity(communities_aug)
+
+#combine
+modularity_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Connectance = c(connectance_june, connectance_july, connectance_aug),
+  Modularity = c(modularity_score_june, modularity_score_july, modularity_score_aug)
+)
+
+#plot
+modularity_df$Month <- factor(modularity_df$Month, levels = c("June", "July", "August"))
+
+
+connectance_plot <- 
+  ggplot(modularity_df, aes(x = Month, y = Connectance, group = 1)) +
+  geom_point(size = 3) +  # Adjust point size as needed
+  geom_line() +  # This will now connect the points
+  geom_point() +
+    theme_bw() +
+    theme(legend.position="none",
+          legend.direction='vertical',
+          plot.title = element_text(size = 18, hjust = 0.5),
+          axis.text.x = element_text(size = 14),
+          axis.title.y = element_text(size = 16),
+          axis.title.x = element_blank(),
+          axis.text.y = element_text(size = 14),
+          panel.grid.minor = element_blank(), 
+          panel.grid.major = element_blank(),
+          strip.text = element_text(size=16),
+          strip.background = element_rect(fill = "white", colour = "NA"))
+
+modularity_plot <- ggplot(modularity_df, aes(x = Month, y = Modularity, group = 1)) +
+  geom_point(size = 3) +  # Adjust point size as needed
+  geom_line() +  # This will now connect the points
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    legend.direction = "vertical",
+    plot.title = element_text(size = 18, hjust = 0.5),
+    axis.text.x = element_text(size = 14),
+    axis.title.y = element_text(size = 16),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    strip.text = element_text(size = 16),
+    strip.background = element_rect(fill = "white", colour = "NA")
+  )
+
+globalind_plots <- connectance_plot / modularity_plot
+
+ggsave(globalind_plots, filename = "globalindices.png",
+       dpi = 450, width = 13, height = 7.64)
+
+#How much does each species affect the network?
+# Run node removal analysis to test robustness
+
 
 
 #####################
