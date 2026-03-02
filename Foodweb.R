@@ -4,6 +4,7 @@ library(tidyverse)
 library(bipartite)
 library(patchwork)
 library(forcats)
+library(igraph)
 
 rm(list = ls())
 
@@ -398,6 +399,8 @@ edgelist_august_Fam <- edgelist_august_Fam %>%
   filter(!Prey %in% "NA")
 edgelist_august_Fam <- edgelist_august_Fam %>%
   filter(!Prey %in% "Fringillidae")
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "Corvidae")
 
 matrix_june_Fam   <- edgelist_to_matrix(edgelist_june_Fam)
 matrix_july_Fam   <- edgelist_to_matrix(edgelist_july_Fam)
@@ -654,20 +657,20 @@ dev.off()
 
 ###JULY
 flying_prey_july <- flyingprey %>%
-  filter(Month == "July")
+  filter(Month == "7")
 
 ground_prey_july <- groundprey %>%
   filter(Month == "7")
 
 #Drop spiders from malaise samples
 flying_prey_july <- flying_prey_july %>%
-  filter(!Taxon %in% c("Araneidae", "Phalangiidae"))
+  filter(!Family %in% c("Araneidae", "Phalangiidae"))
 
 flying_prey_july_matrix <- flying_prey_july %>%
-  select(Taxon, Total) %>%
+  select(Family, Count) %>%
   pivot_wider(
-    names_from = Taxon,
-    values_from = Total,
+    names_from = Family,
+    values_from = Count,
     values_fill = 0
   ) %>%
   as.matrix()
@@ -785,8 +788,8 @@ higher_abundances <- as.numeric(sample_size_july_ord[1, ])
 names(higher_abundances) <- colnames(sample_size_july_ord)
 
 #Add color to mosquitoes and blackflies
-lower_color_jul <- rep("grey20", nrow(matrix_july_flying_expanded_t))
-names(lower_color_jul) <- rownames(matrix_july_flying_expanded_t)
+lower_color_jul <- rep("grey20", nrow(matrix_july))
+names(lower_color_jul) <- rownames(matrix_july)
 lower_color_jul["Culicidae"] <- "goldenrod"
 lower_color_jul["Simuliidae"] <- "firebrick"
 
@@ -797,6 +800,8 @@ plotweb(
   srt = 45,
   text_size = 0.5,
   sorting = "dec",
+  lower_color = lower_color_jul,
+  link_color = "lower"
 )
 dev.off()
 
@@ -992,7 +997,7 @@ plotweb(
   srt = 45,
   text_size = 0.5,
   sorting = "dec",
-  curved_links = TRUE,
+#  curved_links = TRUE,
   lower_color = lower_color_aug,
   link_color = "lower",
 )
@@ -1049,10 +1054,14 @@ visweb(
 #Ignore it for now and calculate some basic metrics
 
 #Species indices
+matrix_june <- edgelist_to_matrix(edgelist_june_Fam)
+matrix_july <- edgelist_to_matrix(edgelist_july_Fam)
+matrix_aug <- edgelist_to_matrix(edgelist_august_Fam)
 
 sp_ind_june <- specieslevel(
   matrix_june
 )
+
 lower_june <- sp_ind_june[["lower level"]]
 lower_june <- lower_june %>%
   mutate(Month = "June")
@@ -1301,19 +1310,41 @@ part_div <-
           strip.text = element_text(size=16),
           strip.background = element_rect(fill = "white", colour = "NA"))
 
+#Closeness centrality
+closeness_df$Month <- factor(closeness_df$Month, levels = c("June", "July", "August"))
+
+
+ggplot(closeness_df, aes(x = species, y = closeness)) +
+  geom_col() +
+  theme_bw() +
+  facet_wrap(~ Month, scales = "free_x") +
+  ylab("Closeness") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+
+#Plot
 Speciesplots <- part_div/
   (degree_june | degree_july | degree_aug) / 
-  (sp_strength_june |sp_strength_july|sp_strength_aug)
+  (sp_strength_june |sp_strength_july|sp_strength_aug) /
+  (closcen_june_p | closcen_july_p | closcen_aug_p)
   
- Speciesplots 
+Speciesplots 
 
 ggsave(Speciesplots, filename = "speciesind_plot.png", 
        dpi = 450, width = 13, height = 7.64)
 
 #General network indices
 # Modularity; Connectance
-
-library(igraph)
 
 edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
 
@@ -1352,6 +1383,43 @@ g_aug <- graph_from_data_frame(
 E(g_aug)$weight <- edgelist_august_Fam$InteractionStrength
 
 
+#Closeness centrality
+closcen_june <- closeness(g_june,
+          vids = V(g_june),
+          mode = "total"
+          )
+
+closcen_june_df <- data.frame(
+  species = names(closcen_june),  # Vertex names or IDs
+  closeness = as.numeric(closcen_june),
+  Month = "June"
+)
+
+closcen_july <- closeness(g_july,
+                          vids = V(g_july),
+                          mode = "total"
+)
+closcen_july_df <- data.frame(
+  species = names(closcen_july),  # Vertex names or IDs
+  closeness = as.numeric(closcen_july),
+  Month = "July"
+)
+
+closcen_aug <- closeness(g_aug,
+                          vids = V(g_aug),
+                          mode = "total"
+)
+
+closcen_aug_df <- data.frame(
+  species = names(closcen_aug),  # Vertex names or IDs
+  closeness = as.numeric(closcen_aug),
+  Month = "August"
+)
+
+closeness_df <- closcen_june_df %>%
+  bind_rows(closcen_july_df) %>%
+  bind_rows(closcen_aug_df)
+
 # Calculate connectance
 connectance_june <- ecount(g_june) / (vcount(g_june) * (vcount(g_june) - 1))
 connectance_july <- ecount(g_july) / (vcount(g_july) * (vcount(g_july) - 1))
@@ -1377,9 +1445,14 @@ modularity_score_aug <- modularity(communities_aug)
 #combine
 modularity_df <- data.frame(
   Month = c("June", "July", "August"),
+  Species = "None",
   Connectance = c(connectance_june, connectance_july, connectance_aug),
   Modularity = c(modularity_score_june, modularity_score_july, modularity_score_aug)
 )
+
+#Nestedness
+
+nest_june <- nestedness(matrix_june)
 
 #plot
 modularity_df$Month <- factor(modularity_df$Month, levels = c("June", "July", "August"))
@@ -1421,15 +1494,214 @@ modularity_plot <- ggplot(modularity_df, aes(x = Month, y = Modularity, group = 
     strip.background = element_rect(fill = "white", colour = "NA")
   )
 
-globalind_plots <- connectance_plot / modularity_plot
-
-ggsave(globalind_plots, filename = "globalindices.png",
-       dpi = 450, width = 13, height = 7.64)
-
 #How much does each species affect the network?
 # Run node removal analysis to test robustness
 
+#Remove Chironomidae
+june_g_Chir <- delete_vertices(g_june, "Chironomidae")
+con_june_chir <- ecount(june_g_Chir) / (vcount(june_g_Chir) * (vcount(g_june) - 1))
+comm_june_Chir <- cluster_optimal(june_g_Chir)
+mod_june_chir <- modularity(comm_june_Chir)
 
+july_g_Chir <- delete_vertices(g_july, "Chironomidae")
+con_july_chir <- ecount(july_g_Chir) / (vcount(july_g_Chir) * (vcount(g_july) - 1))
+comm_july_Chir <- cluster_optimal(july_g_Chir)
+mod_july_chir <- modularity(comm_july_Chir)
+
+aug_g_Chir <- delete_vertices(g_aug, "Chironomidae")
+con_aug_chir <- ecount(aug_g_Chir) / (vcount(aug_g_Chir) * (vcount(g_aug) - 1))
+comm_aug_Chir <- cluster_optimal(aug_g_Chir)
+mod_aug_chir <- modularity(comm_aug_Chir)
+
+#Remove Culicidae
+june_g_culi <- delete_vertices(g_june, "Culicidae")
+con_june_culi <- ecount(june_g_culi) / (vcount(june_g_culi) * (vcount(g_june) - 1))
+comm_june_culi <- cluster_optimal(june_g_culi)
+mod_june_culi <- modularity(comm_june_culi)
+
+july_g_culi <- delete_vertices(g_july, "Culicidae")
+con_july_culi <- ecount(july_g_culi) / (vcount(july_g_culi) * (vcount(g_july) - 1))
+comm_july_culi <- cluster_optimal(july_g_culi)
+mod_july_culi <- modularity(comm_july_culi)
+
+#Remove Araneidae
+aug_g_ara <- delete_vertices(g_aug, "Araneidae")
+con_aug_ara <- ecount(aug_g_ara) / (vcount(aug_g_ara) * (vcount(g_aug) - 1))
+comm_aug_ara <- cluster_optimal(aug_g_ara)
+mod_aug_ara <- modularity(comm_aug_ara)
+
+july_g_ara <- delete_vertices(g_july, "Araneidae")
+con_july_ara <- ecount(july_g_ara) / (vcount(july_g_ara) * (vcount(g_july) - 1))
+comm_july_ara <- cluster_optimal(july_g_ara)
+mod_july_ara <- modularity(comm_july_ara)
+
+june_g_ara <- delete_vertices(g_june, "Araneidae")
+con_june_ara <- ecount(june_g_ara) / (vcount(june_g_ara) * (vcount(g_june) - 1))
+comm_june_ara <- cluster_optimal(june_g_ara)
+mod_june_ara <- modularity(comm_june_ara)
+
+#Remove Lycosidae
+june_g_lyc <- delete_vertices(g_june, "Lycosidae")
+con_june_lyc <- ecount(june_g_lyc) / (vcount(june_g_lyc) * (vcount(g_june) - 1))
+comm_june_lyc <- cluster_optimal(june_g_lyc)
+mod_june_lyc <- modularity(comm_june_lyc)
+
+july_g_lyc <- delete_vertices(g_july, "Lycosidae")
+con_july_lyc <- ecount(july_g_lyc) / (vcount(july_g_lyc) * (vcount(g_july) - 1))
+comm_july_lyc <- cluster_optimal(july_g_lyc)
+mod_july_lyc <- modularity(comm_july_lyc)
+
+aug_g_lyc <- delete_vertices(g_aug, "Lycosidae")
+con_aug_lyc <- ecount(aug_g_lyc) / (vcount(aug_g_lyc) * (vcount(g_aug) - 1))
+comm_aug_lyc <- cluster_optimal(aug_g_lyc)
+mod_aug_lyc <- modularity(comm_aug_lyc)
+
+#Remove Thomisidae
+june_g_tom <- delete_vertices(g_june, "Thomisidae")
+con_june_tom <- ecount(june_g_tom) / (vcount(june_g_tom) * (vcount(g_june) - 1))
+comm_june_tom <- cluster_optimal(june_g_tom)
+mod_june_tom <- modularity(comm_june_tom)
+
+july_g_tom <- delete_vertices(g_july, "Thomisidae")
+con_july_tom <- ecount(july_g_tom) / (vcount(july_g_tom) * (vcount(g_july) - 1))
+comm_july_tom <- cluster_optimal(july_g_tom)
+mod_july_tom <- modularity(comm_july_tom)
+
+#Remove Simuliidae
+july_g_sim <- delete_vertices(g_july, "Simuliidae")
+con_july_sim <- ecount(july_g_sim) / (vcount(july_g_sim) * (vcount(g_july) - 1))
+comm_july_sim <- cluster_optimal(july_g_sim)
+mod_july_sim <- modularity(comm_july_sim)
+
+aug_g_sim <- delete_vertices(g_aug, "Simuliidae")
+con_aug_sim <- ecount(aug_g_sim) / (vcount(aug_g_sim) * (vcount(g_aug) - 1))
+comm_aug_sim <- cluster_optimal(aug_g_sim)
+mod_aug_sim <- modularity(comm_aug_sim)
+
+#Remove Dytiscidae
+june_g_dyt <- delete_vertices(g_june, "Dytiscidae")
+con_june_dyt <- ecount(june_g_dyt) / (vcount(june_g_dyt) * (vcount(g_june) - 1))
+comm_june_dyt <- cluster_optimal(june_g_dyt)
+mod_june_dyt <- modularity(comm_june_dyt)
+
+july_g_dyt <- delete_vertices(g_july, "Dytiscidae")
+con_july_dyt <- ecount(july_g_dyt) / (vcount(july_g_dyt) * (vcount(g_july) - 1))
+comm_july_dyt <- cluster_optimal(july_g_dyt)
+mod_july_dyt <- modularity(comm_july_dyt)
+
+aug_g_dyt <- delete_vertices(g_aug, "Dytiscidae")
+con_aug_dyt <- ecount(aug_g_dyt) / (vcount(aug_g_dyt) * (vcount(g_aug) - 1))
+comm_aug_dyt <- cluster_optimal(aug_g_dyt)
+mod_aug_dyt <- modularity(comm_aug_dyt)
+
+#Combine 
+
+#combine
+chir_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Chironomidae"),
+  Connectance = c(con_june_chir, con_july_chir, con_aug_chir),
+  Modularity = c(mod_june_chir, mod_july_chir, mod_aug_chir)
+)
+cul_df <- data.frame(
+  Month = c("June", "July"),
+  Species = c("Culicidae"),
+  Connectance = c(con_june_culi, con_july_culi),
+  Modularity = c(mod_june_culi, mod_july_culi)
+)
+ara_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Araneidae"),
+  Connectance = c(con_june_ara, con_july_ara, con_aug_ara),
+  Modularity = c(mod_june_ara, mod_july_ara, mod_aug_ara)
+)
+lyc_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Lycosidae"),
+  Connectance = c(con_june_lyc, con_july_lyc, con_aug_lyc),
+  Modularity = c(mod_june_lyc, mod_july_lyc, mod_aug_lyc)
+)
+tom_df <- data.frame(
+  Month = c("June", "July"),
+  Species = c("Thomisidae"),
+  Connectance = c(con_june_tom, con_july_tom),
+  Modularity = c(mod_june_tom, mod_july_tom)
+)
+sim_df <- data.frame(
+  Month = c("July", "August"),
+  Species = c("Simuliidae"),
+  Connectance = c(con_july_sim, con_aug_sim),
+  Modularity = c(mod_july_sim, mod_aug_sim)
+)
+dyt_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Dytiscidae"),
+  Connectance = c(con_june_dyt, con_july_dyt, con_aug_dyt),
+  Modularity = c(mod_june_dyt, mod_july_dyt, mod_aug_dyt)
+)
+
+species_global_df <- chir_df %>%
+  bind_rows(cul_df) %>%
+  bind_rows(ara_df) %>%
+  bind_rows(lyc_df) %>%
+  bind_rows(tom_df) %>%
+  bind_rows(sim_df) %>%
+  bind_rows(dyt_df) %>%
+  bind_rows(modularity_df)
+
+species_global_df$Month <- factor(species_global_df$Month, levels = c("June", "July", "August"))
+species_global_df$Species <- factor(species_global_df$Species, levels = c("None", "Araneidae", "Lycosidae",
+                                                                          "Thomisidae", "Chironomidae", "Culicidae",
+                                                                          "Simuliidae", "Dytiscidae"))
+
+conplot <- ggplot(species_global_df, aes(x = Month, y = Connectance, group = Species)) +
+  geom_line(aes(color = Species), linewidth = 1) +  # This will now connect the points
+  geom_point(size = 4, aes(color = Species)) +  # Adjust point size as needed
+  theme_bw() +
+  labs(
+    color = "Family removed"
+  )+
+  scale_color_manual(values = c("#000000", "#E69F00", "#56B4E9", "#009E73",
+                     "#F0E442",  "#D55E00",
+                     "#CC79A7", "firebrick")) +
+  theme(legend.position="right",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+modplot <- ggplot(species_global_df, aes(x = Month, y = Modularity, group = Species)) +
+  geom_line(aes(color = Species), linewidth = 1) +  # This will now connect the points
+  geom_point(size = 4, aes(color = Species)) +  # Adjust point size as needed
+  theme_bw() +
+  labs(
+    color = "Family removed"
+  )+
+  scale_color_manual(values = c("#000000", "#E69F00", "#56B4E9", "#009E73",
+                                "#F0E442",  "#D55E00",
+                                "#CC79A7", "firebrick")) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+globalind_plots <- conplot / modplot
+
+ggsave(globalind_plots, filename = "globalindices.png",
+       dpi = 450, width = 13, height = 7.64)
 
 #####################
 #Piechart data
