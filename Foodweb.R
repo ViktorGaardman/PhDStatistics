@@ -6,337 +6,6 @@ library(patchwork)
 library(forcats)
 library(igraph)
 
-rm(list = ls())
-
-matrix <- read_xlsx("mergedData_wide_PresenceAbsence_no_zotu.xlsx")
-
-diet_matrix <- matrix[, 9:489]
-
-prey_data <- matrix[, 1:8]
-
-Insect_ID <- read_xlsx("mergedData_long_format_no_zotu.xlsx")
-
-Base_ID <- read.csv("Foodweb_samples_2024.csv", sep = ";")
-
-Base_ID <- Base_ID %>%
-  mutate(
-    Date = str_pad(Date, width = 6, side = "left", pad = "0")  # make all dates 6 digits
-  )
-
-# Create month column
-Base_ID <- Base_ID %>%
-  mutate(
-    Month = str_sub(Date, 3, 4),  # extract MM from DDMMYY
-    Month = case_when(
-      Month == "06" ~ "June",
-      Month == "07" ~ "July",
-      Month %in% c("08", "09") ~ "August",
-      TRUE ~ NA_character_  # catch other months if present
-    ) 
-  )%>%
-  filter(Comment %in% "")
-
-Bird_ID <- Base_ID %>%
-  filter(Group == "Bird") %>%
-  select(ID, Species, Month) %>%
-  rename(
-    Sample = ID,
-    Family   = Species,
-    Month = Month
-  )
-
-NonSpiderPred_ID <- Base_ID %>%
-  filter(Group %in% c("Scatophagidae", "Aquatic predator")) %>%
-  select(ID, Group, Species, Month) %>%
-  rename(
-    Sample = ID,
-    Group2   = Species,
-    Month = Month
-  )
-
-NonSpiderPred_ID$Family <- fct_collapse(
-  NonSpiderPred_ID$Group2,
-  Dytiscidae = c("C. dolabratus larvae", "C. dolabratus", "Colymbetes dolabratus",
-                 "C. Dolabratus"),
-  Chironomidae = "Chironomid larvae",
-  Scathophagidae = "")
-
-Insect_ID <- Insect_ID %>%
-  mutate(
-    Date = str_pad(Date, width = 6, side = "left", pad = "0")  # make all dates 6 digits
-  )
-
-# Create month column
-Insect_ID <- Insect_ID %>%
-  mutate(
-    Month = str_sub(Date, 3, 4),  # extract MM from DDMMYY
-    Month = case_when(
-      Month == "06" ~ "June",
-      Month == "07" ~ "July",
-      Month %in% c("08", "09") ~ "August",
-      TRUE ~ NA_character_  # catch other months if present
-    )
-  )
-
-#Remove the bloodmeal samples for now
-excluded_primers <- c("P16S", "12S-V5")
-
-Insect_Filter <- Insect_ID %>%
-  filter(!PrimerPair %in% excluded_primers)
-
-#Sum reads across remaining primers
-summed_reads <- Insect_Filter %>%
-  group_by(Sample, Family, Genus, Month) %>%
-  summarise(total_reads = sum(Count), .groups = "drop")
-
-#Remove non-spider arthropod predators from field data
-dominant_spidersbirds <- summed_reads %>%
-  filter(!Sample %in% NonSpiderPred_ID$Sample)
-
-#Remove bird predators, leaving only spiders
-dominant_spiders <- dominant_spidersbirds %>%
-  filter(!Sample %in% Bird_ID$Sample)
-
-#Identify families that cannot be spider predators (all non-spiders)
-non_predator_species <- c(
-  "Chironomidae",
-  "Geometridae",
-  "Carabidae",
-  "Unknown",
-  "Noctuidae",
-  "Simuliidae",
-  "Byrrhidae",
-  "Culicidae",
-  "Curculionidae",
-  "Ichneumonidae",
-  "Empididae",
-  "Tipulidae",
-  "Syrphidae",
-  "Oribatulidae",
-  "Tortricidae",
-  "Dytiscidae",
-  "Scathophagidae"
-)
-
-dominant_spider_sp <- dominant_spiders %>%
-  filter(!Family %in% non_predator_species) %>% 
-  group_by(Sample) %>%
-  slice_max(order_by = total_reads, n = 1, with_ties = FALSE) %>%
-  ungroup() %>%
-  select(Sample, Family, Month)
-
-birdsspiders <- bind_rows(
-  dominant_spider_sp,
-  Bird_ID %>% select(Sample, Family, Month)
-)
-
-predator_lookup <- bind_rows(
-  birdsspiders,
-  NonSpiderPred_ID %>% select(Sample, Family, Month)
-)
-
-predator_lookup <- predator_lookup %>%
-  filter(!Family %in% "Unknown")
-
-#Split matrix by month
-
-make_monthly_diet_matrices <- function(diet_matrix, predator_lookup) {
-  
-  # Helper function for a single month
-  make_one_month <- function(month_name) {
-    
-    month_df <- predator_lookup %>%
-      filter(Month == month_name) %>%
-      select(Sample, Family)
-    
-    # Filter diet matrix
-    mat <- diet_matrix[, colnames(diet_matrix) %in% month_df$Sample, drop = FALSE]
-    
-    # Rename columns Sample -> Genus
-    lookup <- setNames(month_df$Family, month_df$Sample)
-    colnames(mat) <- lookup[colnames(mat)]
-    
-    return(mat)
-  }
-
-    # Create matrices
-  list(
-    June   = make_one_month("June"),
-    July   = make_one_month("July"),
-    August = make_one_month("August")
-  )
-}
-
-monthly_matrices <- make_monthly_diet_matrices(
-  diet_matrix = diet_matrix,
-  predator_lookup = predator_lookup
-)
-
-diet_june_Fam   <- monthly_matrices$June
-diet_july_Fam   <- monthly_matrices$July
-diet_august_Fam <- monthly_matrices$August
-
-
-
-#Remove the bloodmeal samples from diel matrix
-diet_matrix_clean <- diet_matrix[, colnames(diet_matrix) %in% predator_lookup$Sample]
-
-# 1. Store original column names
-original_colnames <- colnames(diet_matrix_clean)
-
-#Replace names using the lookup vector
-lookup_vector <- setNames(predator_lookup$Family, predator_lookup$Sample)
-new_colnames <- lookup_vector[original_colnames]
-
-#Assign new column names (some may be NA)
-colnames(diet_matrix_clean) <- new_colnames
-
-#Identify which columns became NA and backtrack their original Sample IDs
-na_columns <- which(is.na(new_colnames))
-if(length(na_columns) > 0){
-  missing_samples <- original_colnames[na_columns]
-  warning("These columns did not match any Sample ID in predator_lookup: ", 
-          paste(missing_samples, collapse = ", "))
-}
-
-#No NAs - we are good to go! :D
-
-write_csv(diet_matrix_clean, "diet_matrix_Fam.csv")
-write_csv(diet_june_Fam, "diet_matrix_june_Fam.csv")
-write_csv(diet_july_Fam, "diet_matrix_july_Fam.csv")
-write_csv(diet_august_Fam, "diet_matrix_august_Fam.csv")
-
-diet_matrix_clean <- read.csv("diet_Matrix_Fam.csv")
-
-#Add prey names to the rows (here genera)
-prey_names <- prey_data$Family
-
-#Store original column names
-original_colnames <- colnames(diet_matrix_clean)
-
-# Make them unique internally
-colnames(diet_matrix_clean) <- make.unique(original_colnames, sep = "_sample_")
-
-#Add prey names as a column
-diet_long <- diet_matrix_clean %>%
-  as.data.frame() %>%         # ensure it's a dataframe
-  mutate(Prey = prey_names) %>%
-  pivot_longer(
-    cols = -Prey,             # keep Prey column
-    names_to = "PredatorSample",
-    values_to = "Presence"
-  )
-
-#Add original names back
-diet_long <- diet_long %>%
-  mutate(Predator = sub("_sample_.*", "", PredatorSample))
-
-#Sum presence per Predator-Prey combination
-interaction_counts <- diet_long %>%
-  group_by(Predator, Prey) %>%
-  summarise(TotalPresence = sum(Presence), .groups = "drop")
-
-# 3. Calculate total number of samples per predator
-total_samples <- diet_long %>%
-  group_by(Predator) %>%
-  summarise(TotalSamples = n(), .groups = "drop")
-
-# 4. Join totals and calculate interaction strength
-edgelist <- interaction_counts %>%
-  left_join(total_samples, by = "Predator") %>%
-  mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
-  select(Predator, Prey, InteractionStrength)
-
-# 5. Optional: remove zero interactions (if you only want non-zero links)
-edgelist <- edgelist %>% filter(InteractionStrength > 0)
-
-#Check list
-head(edgelist)
-
-edgelist <- edgelist %>%
-  filter(!Prey %in% "NA")
-
-edgelist <- edgelist %>%
-  filter(!Prey %in% "Fringillidae")
-
-# Create a new column with prey genus (everything before the first underscore)
-#edgelist <- edgelist %>%
-#  mutate(PreyGenus = sub("_.*", "", Prey))
-
-#Remove predator DNA/cannibalism
-#edgelist_clean <- edgelist %>%
-#  filter(Predator != Prey) %>%  
-#  select(-Prey)                
-
-#Remove predator DNA/cannibalism (Family level)
-edgelist_clean <- edgelist %>%
-  filter(Predator != Prey)
-
-write.csv(edgelist_clean, "edgelist_2024_Fam.csv")
-
-#Monthly edgeslists
-diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
-  
-  # 1. Store original column names
-  original_colnames <- colnames(diet_matrix)
-  
-  # 2. Make column names unique internally
-  colnames(diet_matrix) <- make.unique(original_colnames, sep = "_sample_")
-  
-  # 3. Convert to long format
-  diet_long <- diet_matrix %>%
-    as.data.frame() %>%
-    mutate(Prey = prey_names) %>%
-    pivot_longer(
-      cols = -Prey,
-      names_to = "PredatorSample",
-      values_to = "Presence"
-    )
-  
-  # 4. Recover predator genus from column names
-  diet_long <- diet_long %>%
-    mutate(Predator = sub("_sample_.*", "", PredatorSample))
-  
-  # 5. Count prey occurrences per predator
-  interaction_counts <- diet_long %>%
-    group_by(Predator, Prey) %>%
-    summarise(TotalPresence = sum(Presence), .groups = "drop")
-  
-  # 6. Count number of samples per predator
-  total_samples <- diet_long %>%
-    group_by(Predator) %>%
-    summarise(TotalSamples = n_distinct(PredatorSample), .groups = "drop")
-  
-  # 7. Calculate interaction strength
-  edgelist <- interaction_counts %>%
-    left_join(total_samples, by = "Predator") %>%
-    mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
-    select(Predator, Prey, InteractionStrength) %>%
-    filter(InteractionStrength > 0)
-  
-  # 8. Remove predator DNA / cannibalism (family-level match) and NA
-  edgelist_clean <- edgelist %>%
-    filter(Predator != Prey) %>%
-    filter(!Prey %in% "NA")
-  
-  return(edgelist_clean)
-}
-
-edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_data$Family)
-edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_data$Family)
-edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_data$Family)
-
-
-write.csv(edgelist_june_Fam, "edgelist_june_2024_Fam.csv")
-write.csv(edgelist_july_Fam, "edgelist_july_2024_Fam.csv")
-write.csv(edgelist_august_Fam, "edgelist_august_2024_Fam.csv")
-
-
-
-
-###########
-#Actual foodweb analysis!!
-
 edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
 edgelist_june_Fam <- read.csv("edgelist_june_2024_Fam.csv")
 edgelist_july_Fam <- read.csv("edgelist_July_2024_Fam.csv")
@@ -451,17 +120,6 @@ for (month in names(foodwebs)) {
 #1. Load malaise and pitfall data
 flyingprey <- read.csv("FlyingAbundances2024_edit.csv", sep = ";")
 groundprey <- read.csv("Pitfall2024_edited.csv", sep = ";")
-groundprey <- groundprey[,1:5]
-flyingprey <- flyingprey[,1:5]
-
-combinedprey <- flyingprey %>%
-  bind_rows(groundprey)
-
-combinedprey <- combinedprey %>%
-  group_by(Year, Month, Order, Family) %>%
-  summarize(
-    TCount = sum(Count)
-  )
 
 flying_prey_june <- flyingprey %>%
   filter(Month == "6")
@@ -469,191 +127,94 @@ flying_prey_june <- flyingprey %>%
 ground_prey_june <- groundprey %>%
   filter(Month == "6")
 
-flying_prey_june_matrix <- flying_prey_june %>%
-  select(Taxon, Total) %>%
-  pivot_wider(
-    names_from = Taxon,
-    values_from = Total,
-    values_fill = 0
-  ) %>%
-  as.matrix()
-
 #Drop flying arthropods from pitfall traps
 ground_prey_june <- ground_prey_june %>%
   filter(!Family %in% c("Scelionidae", "Ichneumonidae",
-         "Syrphidae", "Sciaridae", "Phoridae",
-         "Muscidae", "Chironomidae", "Anthomyiidae",
-         "Psylloidea", "Coccoidea", "Aphidoidea"))
+                        "Syrphidae", "Sciaridae", "Phoridae",
+                        "Muscidae", "Chironomidae", "Anthomyiidae",
+                        "Psylloidea", "Coccoidea", "Aphidoidea"))
 
+ground_june <- ground_prey_june %>%
+  select(
+    Family, CountPerHectareDay
+  )
 
+flying_june <- flying_prey_june %>%
+  select(
+    Family, CountPerHectareDay
+  )
 
-ground_prey_june_matrix <- ground_prey_june %>%
-  select(Family, Count) %>%
+prey_june <- flying_june %>%
+  rbind(ground_june)
+
+prey_june_matrix <- prey_june %>%
   pivot_wider(
     names_from = Family,
-    values_from = Count,
+    values_from = CountPerHectareDay,
     values_fill = 0
   ) %>%
   as.matrix()
 
-#2. Split diet into ground dwelling prey and flying prey
-edgelist_june_flying <- edgelist_june_Fam %>%
-  filter(Prey %in% c("Braconidae", "Chironomidae", "Ichneumonidae",
-         "Noctuidae", "Vespidae", "Culicidae"))
-
-edgelist_june_ground <- edgelist_june_Fam %>%
-  filter(!Prey %in% c("Braconidae", "Chironomidae", "Ichneumonidae",
-                     "Noctuidae", "Vespidae", "Culicidae"))
-
 matrix_june <- edgelist_to_matrix(edgelist_june_Fam)
-matrix_june_flying <- edgelist_to_matrix(edgelist_june_flying)
-matrix_june_ground <- edgelist_to_matrix(edgelist_june_ground)
 
-# Transpose your matrix so predators are rows and prey are columns
-matrix_june_flying_transposed <- t(matrix_june_flying)
-matrix_june_ground_transposed <- t(matrix_june_ground)
+#Transpose
+matrix_june_transposed <- t(matrix_june)
 
 # Subset flying_prey_june_matrix to only include prey in matrix_june_flying
-flying_prey_june_matrix2 <- flying_prey_june_matrix[, colnames(matrix_june_flying_transposed)]
-ground_prey_june_matrix2 <- ground_prey_june_matrix[, colnames(matrix_june_ground_transposed)]
+prey_included <- prey_june_matrix[, colnames(matrix_june_transposed)]
 
-flying_prey_june_matrix2 <- matrix(flying_prey_june_matrix2, nrow = 1)
-colnames(flying_prey_june_matrix2) <- colnames(matrix_june_flying_transposed)
-
-ground_prey_june_matrix2 <- matrix(ground_prey_june_matrix2, nrow = 1)
-colnames(ground_prey_june_matrix2) <- colnames(matrix_june_ground_transposed)
+prey_included_m <- matrix(prey_included, nrow = 1)
+colnames(prey_included_m) <- colnames(matrix_june_transposed)
 
 # Get prey names in each matrix
-prey_in_matrix <- colnames(flying_prey_june_matrix2)
-prey_in_abundance <- colnames(flying_prey_june_matrix)
+prey_in_matrix <- colnames(prey_included_m)
+prey_in_abundance <- colnames(prey_june_matrix)
 
-prey_in_matrix_g <- colnames(ground_prey_june_matrix2)
-prey_in_abundance_g <- colnames(ground_prey_june_matrix)
-
-
-# Find prey in abundance but not in matrix
+# Find prey in prey dataset but not in matrix
 missing_prey <- setdiff(prey_in_abundance, prey_in_matrix)
-missing_prey_g <- setdiff(prey_in_abundance_g, prey_in_matrix_g)
 
 # Print the result
 print(missing_prey)
-print(missing_prey_g)
+
 
 # Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
 new_prey <- c("Anthomyiidae", "Calliophoridae", "Mycetophilidae",
               "Phoridae", "Scathophagidae", "Syrphidae", "Encyrtidae",
-              "Geometridae")  # names of prey not in diet
-matrix_june_flying_expanded <- cbind(matrix_june_flying_transposed,
-                                     matrix(0, nrow = nrow(matrix_june_flying_transposed),
+              "Geometridae", "Linyphiidae", "Coccinellidae", "Thysanoptera")  # names of prey not in diet
+matrix_june_expanded <- cbind(matrix_june_transposed,
+                                     matrix(0, nrow = nrow(matrix_june_transposed),
                                             ncol = length(new_prey),
-                                            dimnames = list(rownames(matrix_june_flying_transposed), new_prey)))
+                                            dimnames = list(rownames(matrix_june_transposed), new_prey)))
 
-matrix_june_flying_expanded_t <- t(matrix_june_flying_expanded)
-
-# Get the column names of the expanded matrix (prey)
-prey_order <- rownames(matrix_june_flying_expanded_t)
-
-# Reorder flying_prey_june_matrix to match
-flying_prey_june_ordered <- flying_prey_june_matrix[, prey_order]
-
-# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
-new_prey_g <- c("Linyphiidae", "Coccinellidae", "Thysanoptera")  # names of prey not in diet
-matrix_june_ground_expanded <- cbind(matrix_june_ground_transposed,
-                                     matrix(0, nrow = nrow(matrix_june_ground_transposed),
-                                            ncol = length(new_prey_g),
-                                            dimnames = list(rownames(matrix_june_ground_transposed), new_prey_g)))
-
-matrix_june_ground_expanded_t <- t(matrix_june_ground_expanded)
+matrix_june_expanded_t <- t(matrix_june_expanded)
 
 # Get the column names of the expanded matrix (prey)
-prey_order_g <- rownames(matrix_june_ground_expanded_t)
+prey_order <- rownames(matrix_june_expanded_t)
 
 # Reorder flying_prey_june_matrix to match
-ground_prey_june_ordered <- ground_prey_june_matrix[, prey_order_g]
+prey_june_ordered <- prey_june_matrix[, prey_order]
 
 #Add color to Culicidae
-lower_color <- rep("grey20", nrow(matrix_june_flying_expanded_t))
-names(lower_color) <- rownames(matrix_june_flying_expanded_t)
+lower_color <- rep("grey20", nrow(matrix_june_expanded_t))
+names(lower_color) <- rownames(matrix_june_expanded_t)
 lower_color["Culicidae"] <- "goldenrod"
 
-#Add sample size of predators
-sample_size <- read.csv("SampleSizePred2024.csv", sep = ";")
-colnames(sample_size) <- gsub("\\.", " ", colnames(sample_size))
-
-sample_size_june <- sample_size %>%
-  filter(Month == "June")
-sample_size_june <- sample_size_june[,2:13]
-
-sample_size_july <- sample_size %>%
-  filter(Month == "July")
-sample_size_july <- sample_size_july[,2:13]
-
-sample_size_aug <- sample_size %>%
-  filter(Month == "August")
-sample_size_aug <- sample_size_aug[,2:13]
-
-predator_order_june <- colnames(matrix_june_flying_expanded_t)
-sample_size_june_ord <- sample_size_june[, predator_order_june, drop = FALSE]
-
-#Extract row values as a vector
-higher_abundances <- as.numeric(sample_size_june_ord[1, ])
-names(higher_abundances) <- colnames(sample_size_june_ord)
-
-#Add color to Culicidae
-lower_color <- rep("grey20", nrow(matrix_june_flying_expanded_t))
-names(lower_color) <- rownames(matrix_june_flying_expanded_t)
-lower_color["Culicidae"] <- "goldenrod"
-
-png("foodweb_june_24.png", width = 3000, height = 1500, res = 300)
+png("foodweb_june24.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
-  matrix_june,
+  matrix_june_expanded_t,
   srt = 45,
   text_size = 0.5,
   sorting = "dec",
-#  curved_links = TRUE,
-#  lower_color = lower_color,
-#  link_color = "lower"
+  #  curved_links = TRUE,
+    lower_color = lower_color,
+    link_color = "lower",
+  lower_abundances = prey_june_ordered
 )
 dev.off()
 
 
-png("foodweb_june_flying_2024.png", width = 3000, height = 1000, res = 300)
 
-plotweb(
-  matrix_june_flying_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  lower_abundances = flying_prey_june_ordered,
-  higher_abundances = higher_abundances,
-  lower_color = lower_color,
-  link_color = "lower"
-)
-
-dev.off()
-
-predator_order_june_g <- colnames(matrix_june_ground_expanded_t)
-sample_size_june_ord_g <- sample_size_june[, predator_order_june_g, drop = FALSE]
-
-
-higher_abundances_june_g <- as.numeric(sample_size_june_ord_g[1, ])
-names(higher_abundances_june_g) <- colnames(sample_size_june_ord_g)
-
-png("foodweb_june_ground_2024.png", width = 3000, height = 1250, res = 300)
-
-plotweb(
-  matrix_june_ground_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  higher_abundances = higher_abundances_june_g,
-  lower_abundances = ground_prey_june_ordered
-)
-
-dev.off()
 
 ###JULY
 flying_prey_july <- flyingprey %>%
@@ -661,19 +222,6 @@ flying_prey_july <- flyingprey %>%
 
 ground_prey_july <- groundprey %>%
   filter(Month == "7")
-
-#Drop spiders from malaise samples
-flying_prey_july <- flying_prey_july %>%
-  filter(!Family %in% c("Araneidae", "Phalangiidae"))
-
-flying_prey_july_matrix <- flying_prey_july %>%
-  select(Family, Count) %>%
-  pivot_wider(
-    names_from = Family,
-    values_from = Count,
-    values_fill = 0
-  ) %>%
-  as.matrix()
 
 #Drop flying arthropods from pitfall traps
 ground_prey_july <- ground_prey_july %>%
@@ -685,185 +233,98 @@ ground_prey_july <- ground_prey_july %>%
                         "Dolichopodidae", "Mycetophilidae",
                         "Syrphidae", "Simuliidae", "Tachinidae"))
 
+ground_july <- ground_prey_july %>%
+  select(
+    Family, CountPerHectareDay
+  )
 
-ground_prey_july_matrix <- ground_prey_july %>%
-  select(Family, Count) %>%
+flying_july <- flying_prey_july %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+prey_july <- flying_july %>%
+  rbind(ground_july)
+
+prey_july_matrix <- prey_july %>%
   pivot_wider(
     names_from = Family,
-    values_from = Count,
+    values_from = CountPerHectareDay,
     values_fill = 0
   ) %>%
   as.matrix()
 
-#2. Split diet into ground dwelling prey and flying prey
-edgelist_july_flying <- edgelist_july_Fam %>%
-  filter(Prey %in% c("Anthomyiidae", "Braconidae", "Chironomidae", 
-                     "Ichneumonidae", "Tipulidae", "Tortricidae",
-                     "Noctuidae", "Vespidae", "Culicidae",
-                     "Empididae", "Geometridae", 
-                     "Scathophagidae", "Sciaridae", "Tachinidae",
-                     "Syrphidae", "Simuliidae"))
-
-edgelist_july_ground <- edgelist_july_Fam %>%
-  filter(!Prey %in% c("Anthomyiidae", "Braconidae", "Chironomidae", 
-                      "Ichneumonidae", "Tipulidae", "Tortricidae",
-                      "Noctuidae", "Vespidae", "Culicidae",
-                      "Empididae", "Geometridae", 
-                      "Scathophagidae", "Sciaridae", "Tachinidae",
-                      "Syrphidae", "Simuliidae"))
-
 matrix_july <- edgelist_to_matrix(edgelist_july_Fam)
-matrix_july_flying <- edgelist_to_matrix(edgelist_july_flying)
-matrix_july_ground <- edgelist_to_matrix(edgelist_july_ground)
 
-# Transpose your matrix so predators are rows and prey are columns
-matrix_july_flying_transposed <- t(matrix_july_flying)
-matrix_july_ground_transposed <- t(matrix_july_ground)
+#Transpose
+matrix_july_transposed <- t(matrix_july)
 
-# Subset flying_prey_june_matrix to only include prey in matrix_june_flying
-flying_prey_july_matrix2 <- flying_prey_july_matrix[, colnames(matrix_july_flying_transposed)]
-ground_prey_july_matrix2 <- ground_prey_july_matrix[, colnames(matrix_july_ground_transposed)]
+# Subset flying_prey_july_matrix to only include prey in matrix_july_flying
+prey_included_july <- prey_july_matrix[, colnames(matrix_july_transposed)]
 
-flying_prey_july_matrix2 <- matrix(flying_prey_july_matrix2, nrow = 1)
-colnames(flying_prey_july_matrix2) <- colnames(matrix_july_flying_transposed)
-
-ground_prey_july_matrix2 <- matrix(ground_prey_july_matrix2, nrow = 1)
-colnames(ground_prey_july_matrix2) <- colnames(matrix_july_ground_transposed)
+prey_included_july_m <- matrix(prey_included_july, nrow = 1)
+colnames(prey_included_july_m) <- colnames(matrix_july_transposed)
 
 # Get prey names in each matrix
-prey_in_matrix_july <- colnames(flying_prey_july_matrix2)
-prey_in_abundance_july <- colnames(flying_prey_july_matrix)
+prey_in_matrix_july <- colnames(prey_included_july_m)
+prey_in_abundance_july <- colnames(prey_july_matrix)
 
-prey_in_matrix_july_g <- colnames(ground_prey_july_matrix2)
-prey_in_abundance_july_g <- colnames(ground_prey_july_matrix)
-
-
-# Find prey in abundance but not in matrix
+# Find prey in prey dataset but not in matrix
 missing_prey_july <- setdiff(prey_in_abundance_july, prey_in_matrix_july)
-missing_prey_july_g <- setdiff(prey_in_abundance_july_g, prey_in_matrix_july_g)
 
 # Print the result
 print(missing_prey_july)
-print(missing_prey_july_g)
+
 
 # Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
 new_prey_july <- c("Agromyzidae", "Ceratopogonidae", "Dolichopodidae",
-              "Hypodermatidae", "Muscidae", "Mycetophilidae", "Encyrtidae",
-              "Psyllidae", "Braconidae", "Diapriidae", "Figitidae",
-              "Hemerobiidae", "Limnephilidae")  # names of prey not in diet
-matrix_july_flying_expanded <- cbind(matrix_july_flying_transposed,
-                                     matrix(0, nrow = nrow(matrix_july_flying_transposed),
-                                            ncol = length(new_prey_july),
-                                            dimnames = list(rownames(matrix_july_flying_transposed), new_prey_july)))
+                   "Hypodermatidae", "Muscidae", "Mycetophilidae", "Encyrtidae",
+                   "Psyllidae", "Braconidae", "Diapriidae", "Figitidae",
+                   "Hemerobiidae", "Limnephilidae", "Lygaeidae", "Coccinellidae",
+                     "Thysanoptera", "Cicadellidae")
 
-matrix_july_flying_expanded_t <- t(matrix_july_flying_expanded)
+matrix_july_expanded <- cbind(matrix_july_transposed,
+                              matrix(0, nrow = nrow(matrix_july_transposed),
+                                     ncol = length(new_prey_july),
+                                     dimnames = list(rownames(matrix_july_transposed), new_prey_july)))
 
-# Get the column names of the expanded matrix (prey)
-prey_order_july <- rownames(matrix_july_flying_expanded_t)
-
-# Reorder flying_prey_june_matrix to match
-flying_prey_july_ordered <- flying_prey_july_matrix[, prey_order_july]
-
-# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
-new_prey_july_g <- c("Lygaeidae", "Coccinellidae",
-                     "Thysanoptera", "Cicadellidae")  # names of prey not in diet
-matrix_july_ground_expanded <- cbind(matrix_july_ground_transposed,
-                                     matrix(0, nrow = nrow(matrix_july_ground_transposed),
-                                            ncol = length(new_prey_july_g),
-                                            dimnames = list(rownames(matrix_july_ground_transposed), new_prey_july_g)))
-
-matrix_july_ground_expanded_t <- t(matrix_july_ground_expanded)
+matrix_july_expanded_t <- t(matrix_july_expanded)
 
 # Get the column names of the expanded matrix (prey)
-prey_order_july_g <- rownames(matrix_july_ground_expanded_t)
+prey_order_july <- rownames(matrix_july_expanded_t)
 
-# Reorder flying_prey_june_matrix to match
-ground_prey_july_ordered <- ground_prey_july_matrix[, prey_order_july_g]
+# Reorder flying_prey_july_matrix to match
+prey_july_ordered <- prey_july_matrix[, prey_order_july]
 
-predator_order_july <- colnames(matrix_july_flying_expanded_t)
-sample_size_july_ord <- sample_size_july[, predator_order_july, drop = FALSE]
-
-#Extract row values as a vector
-higher_abundances <- as.numeric(sample_size_july_ord[1, ])
-names(higher_abundances) <- colnames(sample_size_july_ord)
 
 #Add color to mosquitoes and blackflies
-lower_color_jul <- rep("grey20", nrow(matrix_july))
-names(lower_color_jul) <- rownames(matrix_july)
+lower_color_jul <- rep("grey20", nrow(matrix_july_expanded_t))
+names(lower_color_jul) <- rownames(matrix_july_expanded_t)
 lower_color_jul["Culicidae"] <- "goldenrod"
 lower_color_jul["Simuliidae"] <- "firebrick"
 
-png("foodweb_july_24.png", width = 3000, height = 1500, res = 300)
+png("foodweb_july24.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
-  matrix_july,
+  matrix_july_expanded_t,
   srt = 45,
   text_size = 0.5,
   sorting = "dec",
   lower_color = lower_color_jul,
-  link_color = "lower"
+  link_color = "lower",
+  lower_abundances = prey_july_ordered
 )
-dev.off()
-
-png("foodweb_july_flying_2024.png", width = 3000, height = 1250, res = 300)
-
-plotweb(
-  matrix_july_flying_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  lower_abundances = flying_prey_july_ordered,
-  higher_abundances = higher_abundances,
-  lower_color = lower_color_jul,
-  link_color = "lower"
-)
-
-dev.off()
-
-
-predator_order_july_g <- colnames(matrix_july_ground_expanded_t)
-sample_size_july_ord_g <- sample_size_july[, predator_order_july_g, drop = FALSE]
-
-
-higher_abundances_july_g <- as.numeric(sample_size_july_ord_g[1, ])
-names(higher_abundances_july_g) <- colnames(sample_size_july_ord_g)
-
-
-png("foodweb_july_ground_2024.png", width = 3000, height = 1250, res = 300)
-
-plotweb(
-  matrix_july_ground_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  lower_abundances = ground_prey_july_ordered,
-  higher_abundances = higher_abundances_july_g
-)
-
 dev.off()
 
 ###August
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "Corvidae")
+
 flying_prey_aug <- flyingprey %>%
-  filter(Month == "August")
+  filter(Month == "8")
 
 ground_prey_aug <- groundprey %>%
   filter(Month == "8")
-
-#Drop spiders from malaise samples
-flying_prey_aug <- flying_prey_aug %>%
-  filter(!Taxon %in% c("Araneidae", "Phalangiidae", "Curculionidae",
-                       "Lygaeidae"))
-
-flying_prey_aug_matrix <- flying_prey_aug %>%
-  select(Taxon, Total) %>%
-  pivot_wider(
-    names_from = Taxon,
-    values_from = Total,
-    values_fill = 0
-  ) %>%
-  as.matrix()
 
 #Drop flying arthropods from pitfall traps
 ground_prey_aug <- ground_prey_aug %>%
@@ -877,65 +338,52 @@ ground_prey_aug <- ground_prey_aug %>%
                         "Cynipoidea", "Scatophagidae", "Vespidae"))
 
 
-ground_prey_aug_matrix <- ground_prey_aug %>%
-  select(Family, Count) %>%
+ground_august <- ground_prey_aug %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+flying_august <- flying_prey_aug %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+prey_august <- flying_august %>%
+  rbind(ground_august)
+
+prey_august_matrix <- prey_august %>%
   pivot_wider(
     names_from = Family,
-    values_from = Count,
+    values_from = CountPerHectareDay,
     values_fill = 0
   ) %>%
   as.matrix()
 
-#2. Split diet into ground dwelling prey and flying prey
-edgelist_august_Fam <- edgelist_august_Fam %>%
-  filter(!Prey %in% "Corvidae")
+matrix_august <- edgelist_to_matrix(edgelist_august_Fam)
 
-edgelist_aug_flying <- edgelist_august_Fam %>%
-  filter(Prey %in% c("Chironomidae", 
-                     "Ichneumonidae", "Empididae", 
-                     "Scathophagidae","Simuliidae"))
+#Transpose
+matrix_august_transposed <- t(matrix_august)
 
-edgelist_aug_ground <- edgelist_august_Fam %>%
-  filter(!Prey %in% c("Chironomidae", 
-                      "Ichneumonidae", "Empididae", 
-                      "Scathophagidae","Simuliidae"))
+# Subset flying_prey_august_matrix to only include prey in matrix_august_flying
+prey_included_august <- prey_august_matrix[, colnames(matrix_august_transposed)]
 
-matrix_aug <- edgelist_to_matrix(edgelist_august_Fam)
-matrix_aug_flying <- edgelist_to_matrix(edgelist_aug_flying)
-matrix_aug_ground <- edgelist_to_matrix(edgelist_aug_ground)
-
-# Transpose your matrix so predators are rows and prey are columns
-matrix_aug_flying_transposed <- t(matrix_aug_flying)
-matrix_aug_ground_transposed <- t(matrix_aug_ground)
-
-# Subset flying_prey_june_matrix to only include prey in matrix_june_flying
-flying_prey_aug_matrix2 <- flying_prey_aug_matrix[, colnames(matrix_aug_flying_transposed)]
-ground_prey_aug_matrix2 <- ground_prey_aug_matrix[, colnames(matrix_aug_ground_transposed)]
-
-flying_prey_aug_matrix2 <- matrix(flying_prey_aug_matrix2, nrow = 1)
-colnames(flying_prey_aug_matrix2) <- colnames(matrix_aug_flying_transposed)
-
-ground_prey_aug_matrix2 <- matrix(ground_prey_aug_matrix2, nrow = 1)
-colnames(ground_prey_aug_matrix2) <- colnames(matrix_aug_ground_transposed)
+prey_included_august_m <- matrix(prey_included_august, nrow = 1)
+colnames(prey_included_august_m) <- colnames(matrix_august_transposed)
 
 # Get prey names in each matrix
-prey_in_matrix_aug <- colnames(flying_prey_aug_matrix2)
-prey_in_abundance_aug <- colnames(flying_prey_aug_matrix)
+prey_in_matrix_august <- colnames(prey_included_august_m)
+prey_in_abundance_august <- colnames(prey_august_matrix)
 
-prey_in_matrix_aug_g <- colnames(ground_prey_aug_matrix2)
-prey_in_abundance_aug_g <- colnames(ground_prey_aug_matrix)
-
-
-# Find prey in abundance but not in matrix
-missing_prey_aug <- setdiff(prey_in_abundance_aug, prey_in_matrix_aug)
-missing_prey_aug_g <- setdiff(prey_in_abundance_aug_g, prey_in_matrix_aug_g)
+# Find prey in prey dataset but not in matrix
+missing_prey_august <- setdiff(prey_in_abundance_august, prey_in_matrix_august)
 
 # Print the result
-print(missing_prey_aug)
-print(missing_prey_aug_g)
+print(missing_prey_august)
+
+
 
 # Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
-new_prey_aug <- c("Agromyzidae", "Anthomyiidae",
+new_prey_august <- c("Agromyzidae", "Anthomyiidae",
                   "Calliphoridae", "Ceratopogonidae", 
                   "Culicidae", "Dolichopodidae",
                    "Hypodermatidae", "Muscidae", "Mycetophilidae", "Phoridae",
@@ -943,100 +391,41 @@ new_prey_aug <- c("Agromyzidae", "Anthomyiidae",
                   "Aphididae", "Psyllidae", "Braconidae",
                   "Diapriidae", "Encyrtidae", "Eulophidae",
                   "Pteromalidae", "Vespidae", "Geometridae",
-                  "Microlepidoptera", "Hemerobiidae", "Limnephilidae")  # names of prey not in diet
-matrix_aug_flying_expanded <- cbind(matrix_aug_flying_transposed,
-                                     matrix(0, nrow = nrow(matrix_aug_flying_transposed),
-                                            ncol = length(new_prey_aug),
-                                            dimnames = list(rownames(matrix_aug_flying_transposed),
-                                                            new_prey_aug)))
-
-matrix_aug_flying_expanded_t <- t(matrix_aug_flying_expanded)
-
-# Get the column names of the expanded matrix (prey)
-prey_order_aug <- rownames(matrix_aug_flying_expanded_t)
-
-# Reorder flying_prey_june_matrix to match
-flying_prey_aug_ordered <- flying_prey_aug_matrix[, prey_order_aug]
-
-# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
-new_prey_aug_g <- c("Gnaphosidae", "Hahniidae",
+                  "Microlepidoptera", "Hemerobiidae", "Limnephilidae", "Gnaphosidae", "Hahniidae",
                      "Linyphiidae", "Thomisidae",
                     "Curculionidae", "Phalangiidae",
                     "Thysanoptera")  # names of prey not in diet
-matrix_aug_ground_expanded <- cbind(matrix_aug_ground_transposed,
-                                     matrix(0, nrow = nrow(matrix_aug_ground_transposed),
-                                            ncol = length(new_prey_aug_g),
-                                            dimnames = list(rownames(matrix_aug_ground_transposed), 
-                                                            new_prey_aug_g)))
 
-matrix_aug_ground_expanded_t <- t(matrix_aug_ground_expanded)
+
+matrix_august_expanded <- cbind(matrix_august_transposed,
+                              matrix(0, nrow = nrow(matrix_august_transposed),
+                                     ncol = length(new_prey_august),
+                                     dimnames = list(rownames(matrix_august_transposed), new_prey_august)))
+
+matrix_august_expanded_t <- t(matrix_august_expanded)
 
 # Get the column names of the expanded matrix (prey)
-prey_order_aug_g <- rownames(matrix_aug_ground_expanded_t)
+prey_order_august <- rownames(matrix_august_expanded_t)
 
-# Reorder flying_prey_june_matrix to match
-ground_prey_aug_ordered <- ground_prey_aug_matrix[, prey_order_aug_g]
+# Reorder flying_prey_august_matrix to match
+prey_august_ordered <- prey_august_matrix[, prey_order_august]
 
 #Add color to mosquitoes and blackflies
-lower_color_aug <- rep("grey20", nrow(matrix_aug))
-names(lower_color_aug) <- rownames(matrix_aug)
+lower_color_aug <- rep("grey20", nrow(matrix_august_expanded_t))
+names(lower_color_aug) <- rownames(matrix_august_expanded_t)
 lower_color_aug["Culicidae"] <- "goldenrod"
 lower_color_aug["Simuliidae"] <- "firebrick"
 
-predator_order_aug <- colnames(matrix_aug_flying_expanded_t)
-sample_size_aug_ord <- sample_size_aug[, predator_order_aug, drop = FALSE]
-
-#Extract row values as a vector
-higher_abundances_aug <- as.numeric(sample_size_aug_ord[1, ])
-names(higher_abundances_aug) <- colnames(sample_size_aug_ord)
-
-png("foodweb_aug_2024.png", width = 3000, height = 1250, res = 300)
+png("foodweb_aug24.png", width = 3000, height = 1500, res = 300)
 
 plotweb(
-  matrix_aug,
+  matrix_august_expanded_t,
   srt = 45,
   text_size = 0.5,
   sorting = "dec",
-#  curved_links = TRUE,
   lower_color = lower_color_aug,
   link_color = "lower",
-)
-
-dev.off()
-
-png("foodweb_aug_flying_2024.png", width = 3000, height = 1250, res = 300)
-
-plotweb(
-  matrix_aug_flying_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  lower_abundances = flying_prey_aug_ordered,
-  lower_color = lower_color_aug,
-  link_color = "lower",
-  higher_abundances = higher_abundances_aug
-)
-
-dev.off()
-
-predator_order_aug_g <- colnames(matrix_aug_ground_expanded_t)
-sample_size_aug_ord_g <- sample_size_aug[, predator_order_aug_g, drop = FALSE]
-
-#Extract row values as a vector
-higher_abundances_aug_g <- as.numeric(sample_size_aug_ord_g[1, ])
-names(higher_abundances_aug_g) <- colnames(sample_size_aug_ord_g)
-
-png("foodweb_aug_ground_2024.png", width = 3000, height = 1250, res = 300)
-
-plotweb(
-  matrix_aug_ground_expanded_t,
-  srt = 45,
-  text_size = 0.5,
-  sorting = "dec",
-  curved_links = TRUE,
-  lower_abundances = ground_prey_aug_ordered,
-  higher_abundances = higher_abundances_aug_g
+  lower_abundances = prey_august_ordered
 )
 
 dev.off()
@@ -1333,14 +722,15 @@ ggplot(closeness_df, aes(x = species, y = closeness)) +
 
 
 #Plot
-Speciesplots <- part_div/
+Speciesplots <- 
+  #part_div/
   (degree_june | degree_july | degree_aug) / 
-  (sp_strength_june |sp_strength_july|sp_strength_aug) /
-  (closcen_june_p | closcen_july_p | closcen_aug_p)
+  (sp_strength_june |sp_strength_july|sp_strength_aug) 
+#  (closcen_june_p | closcen_july_p | closcen_aug_p)
   
 Speciesplots 
 
-ggsave(Speciesplots, filename = "speciesind_plot.png", 
+ggsave(Speciesplots, filename = "speciesind_plot2.png", 
        dpi = 450, width = 13, height = 7.64)
 
 #General network indices
