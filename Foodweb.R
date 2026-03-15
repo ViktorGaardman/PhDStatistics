@@ -430,6 +430,96 @@ plotweb(
 
 dev.off()
 
+#Abundance vs strength pl
+
+june_strength <- lower_june %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+june_total <- full_join(
+  prey_june,
+  june_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "June")
+
+july_strength <- lower_july %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+july_total <- full_join(
+  prey_july,
+  july_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "July")
+
+august_strength <- lower_aug %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+august_total <- full_join(
+  prey_august,
+  august_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "August")
+
+ggplot(august_total, aes(x = CountPerHectareDay, y = species.strength)) +
+  geom_point()
+
+strength_plot_df <- june_total %>%
+  bind_rows(july_total) %>%
+  bind_rows(august_total)
+
+strength_plot_df <- strength_plot_df %>%
+  mutate(
+    "logAbundance" = log(CountPerHectareDay)
+  )
+
+strength_plot_df$Month <- factor(strength_plot_df$Month, levels = c("June", "July", "August"))
+
+
+strength_plot <- ggplot(strength_plot_df, aes(x = logAbundance, y = species.strength)) +
+  geom_point() +
+  geom_point(
+    data = subset(strength_plot_df, Family == "Culicidae"),
+    color = "goldenrod",
+    size = 2
+  ) +
+  geom_point(
+    data = subset(strength_plot_df, Family == "Simuliidae"),
+    color = "firebrick",
+    size = 2
+  ) +
+#  stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "cornflowerblue", se = FALSE) +
+stat_smooth(method = "gam", color = "cornflowerblue", 
+            se = FALSE, linewidth = 1.2) +
+      facet_wrap(~ Month) +
+  scale_y_continuous(limits = c(0,3)) +
+  theme_bw() +
+  xlab("log(abundance)") +
+  ylab("Prey relevance") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size = 12),
+        strip.background = element_rect(fill = "white", color = "black", size = 1)
+  )
+
+ggsave(plot = strength_plot, filename = "strength_abu_plot.png",
+       dpi = 450, width = 13, height = 5.28)
+
 #VISPLOTS
 
 matrix_july_t <- t(matrix_july)
