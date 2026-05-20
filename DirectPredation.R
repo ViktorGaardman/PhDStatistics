@@ -4,10 +4,16 @@ library('glmmTMB')
 library('car')
 library('ggeffects')
 library('DHARMa')
+library('emmeans')
 
 rm(list = ls())
 
 setwd("C:/Users/vikto/OneDrive/Skrivbord/PhD/R/PhDStatistics")
+
+
+options(contrasts = c("contr.sum", "contr.poly"))
+
+set.seed(123)
 
 df <- read.csv("DirectPredation_CombinedClean.csv", 
                sep=";", header=TRUE, as.is=TRUE)
@@ -29,16 +35,22 @@ df <- df %>%
 df <- df %>%
   filter(!Sex %in% "Control")
 
+#Remove 9 degrees, it was made so late in season that data is not comparable
+df <- df %>% 
+  filter(!Temp %in% 9)
+
+#Add obs level ID
+df$obs <- 1:nrow(df)
+
 #Basic plot
-pred_plot <- ggplot()+
-  geom_jitter(data = df, aes(Temp, Dead), alpha = 0.6, color = "black",
-              width = 0.2) +
-  stat_smooth(method= 'lm', linewidth = 0.8, color = "black") +
-  geom_point() +
+pred_plot <- ggplot(data = df, aes(Temp, Dead, color = Sex))+
+  geom_jitter(alpha = 0.6,
+              width = 0.1) +
+  geom_smooth(linewidth = 0.8) +
   theme_minimal() +
-  ylab("Mosquitoes eaten") +
+  ylab("Daily consumption") +
   xlab("Temperature") +
-  scale_x_continuous(limits = c(3, 15), breaks = seq(3, 15, by = 3)) +
+  scale_x_continuous(limits = c(2, 17), breaks = scales::pretty_breaks(n = 8)) +
   theme(
     axis.text = element_text(size = 12),
     axis.title = element_text(size = 14),
@@ -54,7 +66,7 @@ ggsave("Observed_Direct.png", plot = pred_plot,
 
 #fit model
 predation_mod <- glmmTMB(cbind(Dead, Alive) 
-                     ~ Temp + (1|ID) + (1|Exp_Day),
+                     ~ Temp + Sex + (1|ID) + (1|Exp_Day) + (1|obs),
                      data=df, family = binomial(link = "logit"))
 
 car::Anova(predation_mod, type = 'III')
@@ -68,47 +80,38 @@ plot(residuals(predation_mod) ~
 
 performance::check_overdispersion(predation_mod) 
 
-#Predict feeding rates and plot
-newdat <- data.frame(
-  Temp = seq(min(df$Temp),
-                    max(df$Temp),
-             length.out = 110),
-             ID = df$ID[9],
-             Exp_Day = df$Exp_Day[1]
+#Predict feeding rates per sex
+
+emm <- emmeans(
+  predation_mod,
+  ~ Temp | Sex,
+  at = list(Temp = seq(min(df$Temp), max(df$Temp), length.out = 100)),
+  type = "response"
 )
 
-pred <- predict(predation_mod,
-                newdata = newdat,
-                type = "response",
-                se.fit = TRUE,
-                re.form = NA)
+plot_pred <- as.data.frame(emm)
 
-newdat$fit <- pred$fit
-newdat$lwr <- plogis(qlogis(pred$fit) - 1.96 * pred$se.fit)
-newdat$upr <- plogis(qlogis(pred$fit) + 1.96 * pred$se.fit)
+predicted_pred <- ggplot(plot_pred, aes(x = Temp, y = prob, color = Sex,
+                                        fill = Sex)) +
+  geom_ribbon(data = plot_pred,
+              aes(x = Temp, ymin = asymp.LCL, ymax = asymp.UCL),
+              alpha = 0.1) +
+  geom_jitter(data = df, aes(x = Temp, y = (Dead/20), color = Sex), alpha = 0.6,
+             width = 0.3) +
+  geom_line(data = plot_pred, aes(x = Temp, y = prob, color = Sex), linewidth = 1) +
 
-predicted_pred <- ggplot() +
-  geom_jitter(data = df, aes(Temp, Dead / 20), alpha = 0.6, color = "black",
-             width = 0.2) +
-  geom_line(data = newdat, aes(x = Temp, y = fit), linewidth = 1,
-            color = "cornflowerblue") +
-  geom_ribbon(data = newdat,
-              aes(x = Temp, ymin = lwr, ymax = upr),
-              alpha = 0.2, fill = "cornflowerblue") +
-  scale_x_continuous(limits = c(3, 15), breaks = seq(3, 15, by = 3)) +
-  theme_minimal() +
-  ylab("Predicted predation rate
-       (Proportion eaten)") +
-  xlab("Temperature") +
+    scale_color_manual(values = c("#009E73", "#E69F00")) +
+  scale_fill_manual(values = c("#009E73", "#E69F00")) +
+  scale_x_continuous(limits = c(2, 17), breaks = scales::pretty_breaks(n = 8)) +
+  theme_classic() +
+  ylab("Predicted proportion consumed") +
+  xlab("Temperature (°C)") +
   theme(
     axis.text = element_text(size = 12),
-    axis.title = element_text(size = 14),
-    title = element_text(size = 14),
-    panel.grid.minor = element_blank(),
-    panel.grid.major = element_blank(),
-    axis.line = element_line(color = "black")
+    axis.title = element_text(size = 14)
   )
 
+predicted_pred
 
 ggsave("Predicted_Direct.png", plot = predicted_pred, 
        width = 6.5, height = 5.26, dpi = 450)
