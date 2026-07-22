@@ -5,98 +5,122 @@ library(car)
 library(emmeans)
 library(performance)
 library(lubridate)
+library(DHARMa)
+library(patchwork)
 
 
 rm(list=ls())
 
+options(contrasts = c("contr.sum", "contr.poly"))
+
 df <- read.csv("TrappingCombinations.csv", sep =";", h = T)
 
 #Sampled individuals per hour
-hours <- df %>%
-  group_by(ID) %>%
+df <- df %>%
+  filter(!is.na(Family)) %>%
+  group_by(ID, Family, Species, TrapType, Date_Num) %>%
   summarize(
     CountPerHour = Count / Hours_sampling
   )
 
-df <- df %>%
-  filter(!is.na(Family)) %>%
-  left_join(hours, by = "ID")
+
 df$TrapType <- as_factor(df$TrapType)
 
-df_sum <- df %>%
-  group_by(Date_Num, TrapType) %>%
-  summarise(CountPerHour = mean(CountPerHour, na.rm = TRUE), .groups = "drop")
-
-wide_df <- df_sum %>%
-  select(Date_Num, TrapType, CountPerHour) %>%
-  pivot_wider(
-    names_from = TrapType,
-    values_from = CountPerHour
-  )
-
-df_fam <- df %>%
-  group_by(TrapType, Family,
-           Date_Num) %>%
+df_fam <- df %>% 
+  group_by(Family, TrapType, Date_Num) %>% 
   summarize(
-    SumCountHour = sum(CountPerHour)
+    SumCountPerHour = sum(CountPerHour)
   )
 
+df <- df %>% 
+  mutate(
+    Species = fct_recode(
+      Species,
+      "Oc. impiger" = "Oc_impiger",
+      "Oc. nigripes" = "Oc_nigripes",
+      "S. vittatum" = "S_vittatum",
+      "S. rostratum" = "S_rostratum"
+    )) %>% 
+  mutate(Species = fct_relevel(
+    Species,
+    "Oc. impiger",
+    "S. rostratum",
+    "Oc. nigripes",
+    "S. vittatum"))
 
-raw_boxplot <- ggplot(df_fam, aes(x = TrapType, y = SumCountHour, color=
+species_boxplot <- ggplot(df, aes(x = TrapType, y = CountPerHour, color=
                                          Family)) +
+  facet_wrap(~ Species, scales = "free_y") +
   geom_boxplot(position = position_dodge(width = 0.75)) +
   geom_point(position = position_dodge(width = 0.75)) +
-  theme_bw()+
-  scale_color_manual(values = c("firebrick", "goldenrod")) +
-  ylab("Capture per hour")+
+  theme_classic()+
+  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  ylab("Individuals per hour")+
   scale_y_continuous(limits = c(0,20)) +
-  theme(legend.text = element_text(size = 14),
-        legend.title = element_text(size = 16),
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 14),
     axis.title.x = element_blank(),
-        axis.title.y = element_text(size=16),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size=16),
-        panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank(),
-        plot.title = element_text(size = 18, hjust = 0.5)) 
-
-
-raw_boxplot
-
-ggsave(plot= raw_boxplot, filename = "Attractant_boxplot.TIFF",
-       dpi = 450, width = 6.5, height = 3.5)
-
-df_tot <- df_fam %>%
-  group_by(Family,
-           Date_Num) %>%
-  summarize(
-    TotalCount = sum(SumCountHour)
+    axis.title.y = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    strip.text = element_text(size = 14),
+    legend.position = "none"
   )
 
-time_plot <- ggplot(df_tot, aes(x = Date_Num, y = TotalCount,
-                                       color = Family)) +
-  stat_smooth(method = 'lm', 
-              se = FALSE, 
-              aes(color = Family)) +
-  geom_point() +
-  ylab("Total captures")+
-  xlab("DOY")+
-  scale_color_manual(values = c("firebrick", "goldenrod")) +
-  theme_bw()+
-  theme(legend.position="right",
-        legend.text=element_text(size=14),
-        legend.title=element_text(size=16),
-        legend.direction='vertical',
-        axis.title.y = element_text(size=16),
-        axis.title.x =element_text(size = 16),
-        axis.text = element_text(size = 14),
-        panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank()) 
+species_boxplot
 
-time_plot
 
-ggsave(plot = time_plot, filename = "Capture_time.TIFF",
-       dpi = 450, height = 3.5, width = 6.5)
+family_boxplot <- ggplot(df, aes(x = TrapType, y = CountPerHour, color=
+                                    Family)) +
+  facet_wrap(~ Family, scales = "free_y") +
+  geom_boxplot(position = position_dodge(width = 0.75)) +
+  geom_point(position = position_dodge(width = 0.75)) +
+  theme_classic()+
+  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  ylab("Individuals per hour")+
+  scale_y_continuous(limits = c(0,20)) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    axis.ticks.x = element_blank(),
+    strip.text = element_text(size = 14),
+    legend.position = "none"
+  )
+
+family_boxplot
+
+boxplots <- (family_boxplot / species_boxplot) + plot_annotation(tag_levels = "A")
+
+ggsave(boxplots, filename = "Fig1.TIFF", dpi = 450,
+       height = 10.56, width = 10)
+
+
+comp_mod <- glmmTMB::glmmTMB(
+  CountPerHour ~ Family * TrapType + (1|Date_Num),
+  family = Gamma(link = "log"),
+  data = df
+)
+
+testResiduals(comp_mod, plot = TRUE)
+
+summary(comp_mod)
+
+Anova(comp_mod, type = "3")
+
+pair <- emmeans(comp_mod, ~ Species * TrapType, , 
+                type = "response", adjust = "none")
+
+pairs(pair)
+print(pair)
+
+
+
+
 
 type3 <- list(TrapType = contr.sum, Family = contr.sum)
 
@@ -454,3 +478,180 @@ ggsave(plot = temptime_plot, filename = "Temp_Time.TIFF",
        dpi = 300, height = 3.5, width = 6.5)
 
 head(CO2_min)
+
+
+####Cannister comparison
+
+comp_df <- read.csv("YeastVsCannister.csv", sep =";", h = T)
+
+comp_df <- comp_df %>% 
+  mutate_at(c("Site", "Type",
+            "Date", "Species", "Group"), as.factor)
+
+#Make a gamma model instead of lmer(?)
+comp_mod <- glmmTMB::glmmTMB(
+  CountPerHour ~ Type * Species + (1|Date) + (1|Site),
+    family = Gamma(link = "log"),
+    data = comp_df
+)
+
+testResiduals(comp_mod, plot = TRUE)
+
+summary(comp_mod)
+
+Anova(comp_mod, type = "3")
+
+pair <- emmeans(comp_mod, ~ Species * Type, , 
+                type = "response", adjust = "none")
+
+pairs(pair)
+print(pair)
+
+emm <- emmeans(
+  comp_mod,
+  ~ Species | Type,
+  type = "response"
+)
+
+plot_pred <- as.data.frame(emm)
+
+plot_pred <- plot_pred %>% 
+  mutate(
+    Species = fct_recode(
+    Species,
+    "Oc. impiger" = "Oc_impiger",
+    "Oc. nigripes" = "Oc_nigripes",
+    "S. vittatum" = "S_vittatum",
+    "S. rostratum" = "S_rostratum"
+  )) %>% 
+  mutate(Species = fct_relevel(
+    Species,
+    "Oc. impiger",
+    "S. rostratum",
+    "Oc. nigripes",
+    "S. vittatum"))
+
+comp_df <- comp_df %>% 
+  mutate(
+    Species = fct_recode(
+      Species,
+      "Oc. impiger" = "Oc_impiger",
+      "Oc. nigripes" = "Oc_nigripes",
+      "S. vittatum" = "S_vittatum",
+      "S. rostratum" = "S_rostratum"
+    )) %>%  mutate(Species = fct_relevel(
+         Species,
+         "Oc. impiger",
+         "S. rostratum",
+         "Oc. nigripes",
+         "S. vittatum"))
+
+
+
+predicted_pred <- ggplot() +
+  geom_jitter(data = comp_df, aes(x = Type, y = CountPerHour, color = Type), alpha = 0.5,
+              width = 0.1) +
+  geom_errorbar(
+    data = plot_pred,
+    aes(
+      x = Type,
+      ymin = asymp.LCL,
+      ymax = asymp.UCL,
+      color = Type
+    ),
+    width = 0.2,
+    linewidth = 1
+  ) +
+  geom_point(data = plot_pred, aes(x = Type, y = response, color = Type), size = 4) +
+  #  scale_y_continuous(limits = c(-2, 10), breaks = scales::pretty_breaks(n = 11)) +
+  theme_classic() +
+  ylab("Individuals per hour") +
+  facet_wrap(~ Species, scales = "free_y") +
+  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 14),
+    legend.position = "none",
+    strip.text = element_text(size = 14),
+    axis.ticks.x = element_blank()
+  )
+
+predicted_pred
+
+
+#Gamma model groups
+
+group_df <- comp_df %>% 
+  group_by(Group, Date, Type, Site) %>% 
+  summarize(
+    Sum = sum(CountPerHour)
+  )
+
+group_mod <- glmmTMB::glmmTMB(
+  Sum ~ Type * Group + (1|Date) + (1|Site),
+  family = Gamma(link = "log"),
+  data = group_df
+)
+
+testResiduals(group_mod, plot = TRUE)
+
+summary(group_mod)
+
+Anova(group_mod, type = "3")
+
+pair <- emmeans(group_mod, ~ Group * Type, , 
+                type = "response", adjust = "none")
+
+pairs(pair)
+print(pair)
+
+emm_group <- emmeans(
+  group_mod,
+  ~ Group | Type,
+  type = "response"
+)
+
+group_pred <- as.data.frame(emm_group)
+
+predicted_group <- ggplot() +
+  geom_jitter(data = group_df, aes(x = Type, y = Sum, color = Type), alpha = 0.5,
+              width = 0.1) +
+  geom_errorbar(
+    data = group_pred,
+    aes(
+      x = Type,
+      ymin = asymp.LCL,
+      ymax = asymp.UCL,
+      color = Type
+    ),
+    width = 0.2,
+    linewidth = 1
+  ) +
+  geom_point(data = group_pred, aes(x = Type, y = response, color = Type), size = 4) +
+  #  scale_y_continuous(limits = c(-2, 10), breaks = scales::pretty_breaks(n = 11)) +
+  theme_classic() +
+  ylab("Individuals per hour") +
+  facet_wrap(~ Group, scales = "free_y") +
+  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 14),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 14),
+    axis.ticks.x = element_blank(),
+    strip.text = element_text(size = 14),
+    legend.position = c(0.95, 0.8)
+  )
+
+predicted_group
+
+predicted_catch <- predicted_group / predicted_pred
+
+pred_catch <- predicted_catch + plot_annotation(tag_levels = "A")
+
+ggsave(pred_catch, filename = "Fig3.TIFF", dpi = 450,
+       height = 10.56, width = 10)
