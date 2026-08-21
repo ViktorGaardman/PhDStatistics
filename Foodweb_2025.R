@@ -1,0 +1,1492 @@
+library(readxl)
+library(readr)
+library(tidyverse)
+library(bipartite)
+library(patchwork)
+library(forcats)
+library(igraph)
+
+
+rm(list=ls())
+
+options(contrasts = c("contr.sum", "contr.poly"))
+
+set.seed(123)
+
+edgelist_clean <- read.csv("edgelist_2025_Fam.csv", sep = ",")
+edgelist_june_Fam <- read.csv("edgelist_june_2025_Fam.csv", sep = ";")
+edgelist_july_Fam <- read.csv("edgelist_July_2025_Fam.csv", sep = ",")
+edgelist_august_Fam <- read.csv("edgelist_august_2025_Fam.csv", sep = ",")
+
+edgelist_clean <- edgelist_clean[,2:4]
+edgelist_june_Fam <- edgelist_june_Fam[,2:4]
+edgelist_july_Fam <- edgelist_july_Fam[,2:4]
+edgelist_august_Fam <- edgelist_august_Fam[,2:4]
+
+edgelist_june_Fam <- edgelist_june_Fam %>%
+  group_by(Predator, Prey) %>%
+  summarise(
+    InteractionStrength = sum(InteractionStrength),
+    .groups = "drop"
+  )
+
+# Convert long edgelist to matrix format
+network_matrix <- edgelist_clean %>%
+  pivot_wider(
+    names_from = Predator,
+    values_from = InteractionStrength,
+    values_fill = 0
+  ) %>%
+  column_to_rownames("Prey") %>%  # rows = prey
+  as.matrix()
+
+
+
+# Check
+dim(network_matrix)
+head(network_matrix)
+
+
+png("foodweb_basic.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  network_matrix,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec"
+)
+
+dev.off()
+
+#Monthly
+
+edgelist_to_matrix <- function(edgelist) {
+  
+  network_matrix <- edgelist %>%
+    pivot_wider(
+      names_from  = Predator,
+      values_from = InteractionStrength,
+      values_fill = 0
+    ) %>%
+    column_to_rownames("Prey") %>%
+    as.matrix()
+  
+  return(network_matrix)
+}
+
+edgelist_june_Fam <- edgelist_june_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_july_Fam <- edgelist_july_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "NA")
+
+matrix_june_Fam25   <- edgelist_to_matrix(edgelist_june_Fam)
+matrix_july_Fam25   <- edgelist_to_matrix(edgelist_july_Fam)
+matrix_august_Fam25 <- edgelist_to_matrix(edgelist_august_Fam)
+
+plotweb(
+  matrix_june_Fam25,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  curved_links = TRUE
+)
+
+visweb(
+  matrix_june_Fam25
+)
+
+
+foodwebs <- list(
+  June   = matrix_june_Fam25,
+  July   = matrix_july_Fam25,
+  August = matrix_august_Fam25
+)
+
+for (month in names(foodwebs)) {
+  
+  png(
+    filename = paste0("Fam_foodweb_25", month, ".png"),
+    width = 3000,
+    height = 1500,
+    res = 300
+  )
+  
+  plotweb(
+    foodwebs[[month]],
+    srt = 45,
+    text_size = 0.5,
+    sorting = "dec"
+  )
+  
+  title(paste("Fam food web 25 –", month))
+  
+  dev.off()
+}
+
+
+#Weighted analyses
+#1. Load malaise and pitfall data
+flyingprey <- read.csv("FlyingAbundances2024_edit.csv", sep = ";")
+groundprey <- read.csv("Pitfall2024_edited.csv", sep = ";")
+
+flying_prey_june <- flyingprey %>%
+  filter(Month == "6")
+
+ground_prey_june <- groundprey %>%
+  filter(Month == "6")
+
+#Drop flying arthropods from pitfall traps
+ground_prey_june <- ground_prey_june %>%
+  filter(!Family %in% c("Scelionidae", "Ichneumonidae",
+                        "Syrphidae", "Sciaridae", "Phoridae",
+                        "Muscidae", "Chironomidae", "Anthomyiidae",
+                        "Psylloidea", "Coccoidea", "Aphidoidea"))
+
+ground_june <- ground_prey_june %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+flying_june <- flying_prey_june %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+prey_june <- flying_june %>%
+  rbind(ground_june)
+
+prey_june_matrix <- prey_june %>%
+  pivot_wider(
+    names_from = Family,
+    values_from = CountPerHectareDay,
+    values_fill = 0
+  ) %>%
+  as.matrix()
+
+matrix_june <- edgelist_to_matrix(edgelist_june_Fam)
+
+#Transpose
+matrix_june_transposed <- t(matrix_june)
+
+# Subset flying_prey_june_matrix to only include prey in matrix_june_flying
+prey_included <- prey_june_matrix[, colnames(matrix_june_transposed)]
+
+prey_included_m <- matrix(prey_included, nrow = 1)
+colnames(prey_included_m) <- colnames(matrix_june_transposed)
+
+# Get prey names in each matrix
+prey_in_matrix <- colnames(prey_included_m)
+prey_in_abundance <- colnames(prey_june_matrix)
+
+# Find prey in prey dataset but not in matrix
+missing_prey <- setdiff(prey_in_abundance, prey_in_matrix)
+
+# Print the result
+print(missing_prey)
+
+
+# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
+new_prey <- c("Anthomyiidae", "Calliophoridae", "Mycetophilidae",
+              "Phoridae", "Scathophagidae", "Syrphidae", "Encyrtidae",
+              "Geometridae", "Linyphiidae", "Coccinellidae", "Thysanoptera")  # names of prey not in diet
+matrix_june_expanded <- cbind(matrix_june_transposed,
+                              matrix(0, nrow = nrow(matrix_june_transposed),
+                                     ncol = length(new_prey),
+                                     dimnames = list(rownames(matrix_june_transposed), new_prey)))
+
+matrix_june_expanded_t <- t(matrix_june_expanded)
+
+# Get the column names of the expanded matrix (prey)
+prey_order <- rownames(matrix_june_expanded_t)
+
+# Reorder flying_prey_june_matrix to match
+prey_june_ordered <- prey_june_matrix[, prey_order]
+
+#Add color to Culicidae
+lower_color <- rep("grey20", nrow(matrix_june_expanded_t))
+names(lower_color) <- rownames(matrix_june_expanded_t)
+lower_color["Culicidae"] <- "goldenrod"
+
+png("foodweb_june24.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  matrix_june_expanded_t,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  #  curved_links = TRUE,
+  lower_color = lower_color,
+  link_color = "lower",
+  lower_abundances = prey_june_ordered
+)
+dev.off()
+
+
+
+
+###JULY
+flying_prey_july <- flyingprey %>%
+  filter(Month == "7")
+
+ground_prey_july <- groundprey %>%
+  filter(Month == "7")
+
+#Drop flying arthropods from pitfall traps
+ground_prey_july <- ground_prey_july %>%
+  filter(!Family %in% c("Scelionidae", "Ichneumonidae",
+                        "Syrphidae", "Sciaridae", "Phoridae",
+                        "Muscidae", "Chironomidae", "Anthomyiidae",
+                        "Psylloidea", "Coccoidea", "Aphidoidea",
+                        "Calliphoridae", "Cecidomyiidae", "Chalcidoidea",
+                        "Dolichopodidae", "Mycetophilidae",
+                        "Syrphidae", "Simuliidae", "Tachinidae"))
+
+ground_july <- ground_prey_july %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+flying_july <- flying_prey_july %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+prey_july <- flying_july %>%
+  rbind(ground_july)
+
+prey_july_matrix <- prey_july %>%
+  pivot_wider(
+    names_from = Family,
+    values_from = CountPerHectareDay,
+    values_fill = 0
+  ) %>%
+  as.matrix()
+
+matrix_july <- edgelist_to_matrix(edgelist_july_Fam)
+
+#Transpose
+matrix_july_transposed <- t(matrix_july)
+
+# Subset flying_prey_july_matrix to only include prey in matrix_july_flying
+prey_included_july <- prey_july_matrix[, colnames(matrix_july_transposed)]
+
+prey_included_july_m <- matrix(prey_included_july, nrow = 1)
+colnames(prey_included_july_m) <- colnames(matrix_july_transposed)
+
+# Get prey names in each matrix
+prey_in_matrix_july <- colnames(prey_included_july_m)
+prey_in_abundance_july <- colnames(prey_july_matrix)
+
+# Find prey in prey dataset but not in matrix
+missing_prey_july <- setdiff(prey_in_abundance_july, prey_in_matrix_july)
+
+# Print the result
+print(missing_prey_july)
+
+
+# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
+new_prey_july <- c("Agromyzidae", "Ceratopogonidae", "Dolichopodidae",
+                   "Hypodermatidae", "Muscidae", "Mycetophilidae", "Encyrtidae",
+                   "Psyllidae", "Braconidae", "Diapriidae", "Figitidae",
+                   "Hemerobiidae", "Limnephilidae", "Lygaeidae", "Coccinellidae",
+                   "Thysanoptera", "Cicadellidae")
+
+matrix_july_expanded <- cbind(matrix_july_transposed,
+                              matrix(0, nrow = nrow(matrix_july_transposed),
+                                     ncol = length(new_prey_july),
+                                     dimnames = list(rownames(matrix_july_transposed), new_prey_july)))
+
+matrix_july_expanded_t <- t(matrix_july_expanded)
+
+# Get the column names of the expanded matrix (prey)
+prey_order_july <- rownames(matrix_july_expanded_t)
+
+# Reorder flying_prey_july_matrix to match
+prey_july_ordered <- prey_july_matrix[, prey_order_july]
+
+
+#Add color to mosquitoes and blackflies
+lower_color_jul <- rep("grey20", nrow(matrix_july_expanded_t))
+names(lower_color_jul) <- rownames(matrix_july_expanded_t)
+lower_color_jul["Culicidae"] <- "goldenrod"
+lower_color_jul["Simuliidae"] <- "firebrick"
+
+png("foodweb_july24.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  matrix_july_expanded_t,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  lower_color = lower_color_jul,
+  link_color = "lower",
+  lower_abundances = prey_july_ordered
+)
+dev.off()
+
+###August
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "Corvidae")
+
+flying_prey_aug <- flyingprey %>%
+  filter(Month == "8")
+
+ground_prey_aug <- groundprey %>%
+  filter(Month == "8")
+
+#Drop flying arthropods from pitfall traps
+ground_prey_aug <- ground_prey_aug %>%
+  filter(!Family %in% c("Scelionidae", "Ichneumonidae",
+                        "Syrphidae", "Sciaridae", "Phoridae",
+                        "Muscidae", "Chironomidae", "Anthomyiidae",
+                        "Psylloidea", "Coccoidea", "Aphidoidea",
+                        "Calliphoridae", "Cecidomyiidae", "Chalcidoidea",
+                        "Dolichopodidae", "Mycetophilidae",
+                        "Syrphidae", "Simuliidae", "Tachinidae",
+                        "Cynipoidea", "Scatophagidae", "Vespidae"))
+
+
+ground_august <- ground_prey_aug %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+flying_august <- flying_prey_aug %>%
+  select(
+    Family, CountPerHectareDay
+  )
+
+prey_august <- flying_august %>%
+  rbind(ground_august)
+
+prey_august_matrix <- prey_august %>%
+  pivot_wider(
+    names_from = Family,
+    values_from = CountPerHectareDay,
+    values_fill = 0
+  ) %>%
+  as.matrix()
+
+matrix_august <- edgelist_to_matrix(edgelist_august_Fam)
+
+#Transpose
+matrix_august_transposed <- t(matrix_august)
+
+# Subset flying_prey_august_matrix to only include prey in matrix_august_flying
+prey_included_august <- prey_august_matrix[, colnames(matrix_august_transposed)]
+
+prey_included_august_m <- matrix(prey_included_august, nrow = 1)
+colnames(prey_included_august_m) <- colnames(matrix_august_transposed)
+
+# Get prey names in each matrix
+prey_in_matrix_august <- colnames(prey_included_august_m)
+prey_in_abundance_august <- colnames(prey_august_matrix)
+
+# Find prey in prey dataset but not in matrix
+missing_prey_august <- setdiff(prey_in_abundance_august, prey_in_matrix_august)
+
+# Print the result
+print(missing_prey_august)
+
+
+
+# Add new prey columns with all zeros for prey in Malaise or pitfall but not diet
+new_prey_august <- c("Agromyzidae", "Anthomyiidae",
+                     "Calliphoridae", "Ceratopogonidae", 
+                     "Culicidae", "Dolichopodidae",
+                     "Hypodermatidae", "Muscidae", "Mycetophilidae", "Phoridae",
+                     "Sciaridae", "Syrphidae", "Tachinidae",
+                     "Aphididae", "Psyllidae", "Braconidae",
+                     "Diapriidae", "Encyrtidae", "Eulophidae",
+                     "Pteromalidae", "Vespidae", "Geometridae",
+                     "Microlepidoptera", "Hemerobiidae", "Limnephilidae", "Gnaphosidae", "Hahniidae",
+                     "Linyphiidae", "Thomisidae",
+                     "Curculionidae", "Phalangiidae",
+                     "Thysanoptera")  # names of prey not in diet
+
+
+matrix_august_expanded <- cbind(matrix_august_transposed,
+                                matrix(0, nrow = nrow(matrix_august_transposed),
+                                       ncol = length(new_prey_august),
+                                       dimnames = list(rownames(matrix_august_transposed), new_prey_august)))
+
+matrix_august_expanded_t <- t(matrix_august_expanded)
+
+# Get the column names of the expanded matrix (prey)
+prey_order_august <- rownames(matrix_august_expanded_t)
+
+# Reorder flying_prey_august_matrix to match
+prey_august_ordered <- prey_august_matrix[, prey_order_august]
+
+#Add color to mosquitoes and blackflies
+lower_color_aug <- rep("grey20", nrow(matrix_august_expanded_t))
+names(lower_color_aug) <- rownames(matrix_august_expanded_t)
+lower_color_aug["Culicidae"] <- "goldenrod"
+lower_color_aug["Simuliidae"] <- "firebrick"
+
+png("foodweb_aug24.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  matrix_august_expanded_t,
+  srt = 45,
+  text_size = 0.5,
+  sorting = "dec",
+  lower_color = lower_color_aug,
+  link_color = "lower",
+  lower_abundances = prey_august_ordered
+)
+
+dev.off()
+
+#Abundance vs strength pl
+
+june_strength <- lower_june %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+june_total <- full_join(
+  prey_june,
+  june_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "June")
+
+july_strength <- lower_july %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+july_total <- full_join(
+  prey_july,
+  july_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "July")
+
+august_strength <- lower_aug %>%
+  select(Month, Family, species.strength)
+
+# Combine the dataframes, filling missing species.strength with 0
+august_total <- full_join(
+  prey_august,
+  august_strength,
+  by = "Family"
+) %>%
+  mutate(species.strength = ifelse(is.na(species.strength), 0, species.strength)) %>%
+  mutate(Month = "August")
+
+ggplot(august_total, aes(x = CountPerHectareDay, y = species.strength)) +
+  geom_point()
+
+strength_plot_df <- june_total %>%
+  bind_rows(july_total) %>%
+  bind_rows(august_total)
+
+strength_plot_df <- strength_plot_df %>%
+  mutate(
+    "logAbundance" = log(CountPerHectareDay)
+  )
+
+strength_plot_df$Month <- factor(strength_plot_df$Month, levels = c("June", "July", "August"))
+
+
+strength_plot <- ggplot(strength_plot_df, aes(x = logAbundance, y = species.strength)) +
+  geom_point() +
+  geom_point(
+    data = subset(strength_plot_df, Family == "Culicidae"),
+    color = "goldenrod",
+    size = 2
+  ) +
+  geom_point(
+    data = subset(strength_plot_df, Family == "Simuliidae"),
+    color = "firebrick",
+    size = 2
+  ) +
+  #  stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "cornflowerblue", se = FALSE) +
+  stat_smooth(method = "gam", color = "cornflowerblue", 
+              se = FALSE, linewidth = 1.2) +
+  facet_wrap(~ Month) +
+  scale_y_continuous(limits = c(0,3)) +
+  theme_bw() +
+  xlab("log(abundance)") +
+  ylab("Prey relevance") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_text(size = 12),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size = 12),
+        strip.background = element_rect(fill = "white", color = "black", size = 1)
+  )
+
+ggsave(plot = strength_plot, filename = "strength_abu_plot.png",
+       dpi = 450, width = 13, height = 5.28)
+
+#VISPLOTS
+
+matrix_july_t <- t(matrix_july)
+visweb(
+  matrix_july_t
+)
+
+
+#We should take prey eating prey into account, but 
+#not enough data for that yet I would say
+#Ignore it for now and calculate some basic metrics
+
+#Species indices
+edgelist_june_Fam <- edgelist_june_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_july_Fam <- edgelist_july_Fam %>%
+  filter(!Prey %in% "NA")
+edgelist_august_Fam <- edgelist_august_Fam %>%
+  filter(!Prey %in% "NA")
+
+matrix_june <- edgelist_to_matrix(edgelist_june_Fam)
+matrix_july <- edgelist_to_matrix(edgelist_july_Fam)
+matrix_aug <- edgelist_to_matrix(edgelist_august_Fam)
+
+
+
+sp_ind_june <- specieslevel(
+  matrix_june
+)
+
+lower_june <- sp_ind_june[["lower level"]]
+lower_june <- lower_june %>%
+  mutate(Month = "June")
+lower_june <- lower_june %>%
+  rownames_to_column(var = "Family")
+
+higher_june <- sp_ind_june[["higher level"]]
+higher_june <- higher_june %>%
+  mutate(Month = "June")
+higher_june <- higher_june %>%
+  rownames_to_column(var = "Family")
+
+sp_ind_july <- specieslevel(
+  matrix_july
+)
+lower_july <- sp_ind_july[["lower level"]]
+lower_july <- lower_july %>%
+  mutate(Month = "July")
+lower_july <- lower_july %>%
+  rownames_to_column(var = "Family")
+
+higher_july <- sp_ind_july[["higher level"]]
+higher_july <- higher_july %>%
+  mutate(Month = "July")
+higher_july <- higher_july %>%
+  rownames_to_column(var = "Family")
+
+sp_ind_aug <- specieslevel(
+  matrix_aug
+)
+lower_aug <- sp_ind_aug[["lower level"]]
+lower_aug <- lower_aug %>%
+  mutate(Month = "August")
+lower_aug <- lower_aug %>%
+  rownames_to_column(var = "Family")
+
+higher_aug <- sp_ind_aug[["higher level"]]
+higher_aug <- higher_aug %>%
+  mutate(Month = "August")
+higher_aug <- higher_aug %>%
+  rownames_to_column(var = "Family")
+
+
+#Combine low
+lower_com <- lower_june %>%
+  bind_rows(lower_july) %>%
+  bind_rows(lower_aug)
+
+lower_com$Month <- factor(lower_com$Month, levels = c("June", "July", "August"))
+
+#combine high
+higher_com <- higher_june %>%
+  bind_rows(higher_july) %>%
+  bind_rows(higher_aug)
+higher_com$Month <- factor(higher_com$Month, levels = c("June", "July", "August"))
+
+#Species indices to use for prey
+#Degree (number of links)
+#Species strength (the sum of interaction strengths in all links)
+lower_june$Family <- factor(lower_june$Family,
+                            levels = c("Chironomidae", "Culicidae",
+                                       "Lycosidae", "Araneidae",
+                                       "Dytiscidae", "Thomisidae",
+                                       "Philodromidae", "Noctuidae",
+                                       "Phalangiidae", "Carabidae",
+                                       "Braconidae", "Gnaphosidae",
+                                       "Byrrhidae", "Curculionidae",
+                                       "Ichneumonidae", "Vespidae"))
+lower_june <- lower_june |> 
+  filter(!is.na(Family))
+lower_july <- lower_july |> 
+  filter(!is.na(Family))
+lower_aug <- lower_aug |> 
+  filter(!is.na(Family))
+
+degree_june <- ggplot(lower_june, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  ylab("Degree") +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_july$Family <- factor(lower_july$Family,
+                            levels = c("Chironomidae", "Dytiscidae" ,
+                                       "Lycosidae", "Araneidae", 
+                                       "Geometridae", "Philodromidae",
+                                       "Thomisidae", "Scathophagidae",
+                                       "Simuliidae", "Phalangiidae",
+                                       "Noctuidae","Syrphidae", 
+                                       "Empididae", "Curculionidae",
+                                       "Ichneumonidae", "Tachinidae",
+                                       "Anthomyiidae", "Tortricidae",
+                                       "Byrrhidae", "Tipulidae",
+                                       "Carabidae", "Culicidae",
+                                       "Gnaphosidae", "Sciaridae",
+                                       "Oribatulidae", "Linyphiidae"))
+
+degree_july <- ggplot(lower_july, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_aug$Family <- factor(lower_aug$Family,
+                           levels = c("Araneidae", "Chironomidae",
+                                      "Lycosidae", "Scathophagidae",
+                                      "Simuliidae", "Dytiscidae", "Empididae",
+                                      "Ichneumonidae"))
+
+degree_aug <- ggplot(lower_aug, aes(x = Family, y = degree)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,9), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_june$Family <- factor(lower_june$Family,
+                            levels = c("Chironomidae","Lycosidae",
+                                       "Culicidae","Araneidae",
+                                       "Thomisidae", "Dytiscidae",
+                                       "Noctuidae",
+                                       "Phalangiidae", "Philodromidae",
+                                       "Carabidae","Curculionidae",
+                                       "Braconidae", "Gnaphosidae",
+                                       "Byrrhidae", 
+                                       "Ichneumonidae", "Vespidae"))
+
+sp_strength_june <- ggplot(lower_june, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,4.2), n.breaks = 7) +
+  ylab("Species strength") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_july$Family <- factor(lower_july$Family,
+                            levels = c("Dytiscidae",  "Araneidae",
+                                       "Chironomidae", "Lycosidae",
+                                       "Thomisidae", "Scathophagidae",
+                                       "Geometridae", "Philodromidae",
+                                       "Noctuidae", "Phalangiidae",
+                                       "Syrphidae",
+                                       "Tortricidae", "Simuliidae",  
+                                       "Empididae","Byrrhidae", 
+                                       "Culicidae", "Curculionidae", 
+                                       "Anthomyiidae", 
+                                       "Tipulidae","Oribatulidae",
+                                       "Carabidae", 
+                                       "Linyphiidae",
+                                       "Gnaphosidae",
+                                       "Ichneumonidae", 
+                                       "Tachinidae","Sciaridae"
+                            ))
+
+sp_strength_july <- ggplot(lower_july, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,4.2), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+lower_aug$Family <- factor(lower_aug$Family,
+                           levels = c("Araneidae", "Scathophagidae",
+                                      "Chironomidae",
+                                      "Lycosidae", "Ichneumonidae", 
+                                      "Empididae",
+                                      "Simuliidae", "Dytiscidae"
+                           ))
+
+sp_strength_aug <- ggplot(lower_aug, aes(x = Family, y = species.strength)) +
+  geom_col()+
+  theme_bw() +
+  scale_y_continuous(limits = c(0,4.2), n.breaks = 7) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+  ) 
+
+#Species indices to use for predators
+#Partner diversity (measure of generalist/specialist)
+
+higher_com$partner.diversity2 <- higher_com$partner.diversity + 0.01
+
+part_div <- 
+  ggplot(higher_com, aes(x = Family, y = partner.diversity2)) +
+  geom_col() +
+  theme_bw() +
+  facet_wrap(~ Month, scales = "free_x") +
+  ylab("Partner diversity") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+#Closeness centrality
+closeness_df$Month <- factor(closeness_df$Month, levels = c("June", "July", "August"))
+
+
+ggplot(closeness_df, aes(x = species, y = closeness)) +
+  geom_col() +
+  theme_bw() +
+  facet_wrap(~ Month, scales = "free_x") +
+  ylab("Closeness") +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 8, angle = 45, hjust = 1),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+
+#Plot
+Speciesplots <- 
+  #part_div/
+  (degree_june | degree_july | degree_aug) / 
+  (sp_strength_june |sp_strength_july|sp_strength_aug) 
+#  (closcen_june_p | closcen_july_p | closcen_aug_p)
+
+Speciesplots 
+
+ggsave(Speciesplots, filename = "speciesind_plot2025.png", 
+       dpi = 450, width = 13, height = 7.64)
+
+#General network indices
+# Modularity; Connectance
+
+edgelist_clean <- read.csv("edgelist_2025_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+
+
+#Create basic graph
+g_june <- graph_from_data_frame(
+  edgelist_june_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_june_Fam$Predator, edgelist_june_Fam$Prey))
+)
+
+#Add interaction strength as weights
+E(g_june)$weight <- edgelist_june_Fam$InteractionStrength
+
+#Check if it worked
+g_june
+is_weighted(g_june)
+
+#Repeat for July and August
+g_july <- graph_from_data_frame(
+  edgelist_july_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_july_Fam$Predator, edgelist_july_Fam$Prey))
+)
+
+E(g_july)$weight <- edgelist_july_Fam$InteractionStrength
+
+g_aug <- graph_from_data_frame(
+  edgelist_august_Fam,
+  directed = TRUE,
+  vertices = unique(c(edgelist_august_Fam$Predator, edgelist_august_Fam$Prey))
+)
+
+E(g_aug)$weight <- edgelist_august_Fam$InteractionStrength
+
+
+#Closeness centrality
+closcen_june <- closeness(g_june,
+                          vids = V(g_june),
+                          mode = "total"
+)
+
+closcen_june_df <- data.frame(
+  species = names(closcen_june),  # Vertex names or IDs
+  closeness = as.numeric(closcen_june),
+  Month = "June"
+)
+
+closcen_july <- closeness(g_july,
+                          vids = V(g_july),
+                          mode = "total"
+)
+closcen_july_df <- data.frame(
+  species = names(closcen_july),  # Vertex names or IDs
+  closeness = as.numeric(closcen_july),
+  Month = "July"
+)
+
+closcen_aug <- closeness(g_aug,
+                         vids = V(g_aug),
+                         mode = "total"
+)
+
+closcen_aug_df <- data.frame(
+  species = names(closcen_aug),  # Vertex names or IDs
+  closeness = as.numeric(closcen_aug),
+  Month = "August"
+)
+
+closeness_df <- closcen_june_df %>%
+  bind_rows(closcen_july_df) %>%
+  bind_rows(closcen_aug_df)
+
+# Calculate connectance
+connectance_june <- ecount(g_june) / (vcount(g_june) * (vcount(g_june) - 1))
+connectance_july <- ecount(g_july) / (vcount(g_july) * (vcount(g_july) - 1))
+connectance_aug <- ecount(g_aug) / (vcount(g_aug) * (vcount(g_aug) - 1))
+
+# Modularity
+# Detect communities using the fast greedy algorithm
+communities_june <- cluster_optimal(g_june)
+
+# Calculate modularity
+modularity_score_june <- modularity(communities_june)
+
+communities_july <- cluster_optimal(g_july)
+
+# Calculate modularity
+modularity_score_july <- modularity(communities_july)
+
+communities_aug <- cluster_optimal(g_aug)
+
+# Calculate modularity
+modularity_score_aug <- modularity(communities_aug)
+
+#combine
+modularity_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = "None",
+  Connectance = c(connectance_june, connectance_july, connectance_aug),
+  Modularity = c(modularity_score_june, modularity_score_july, modularity_score_aug)
+)
+
+#Nestedness
+
+nest_june <- nestedness(matrix_june)
+
+#plot
+modularity_df$Month <- factor(modularity_df$Month, levels = c("June", "July", "August"))
+
+
+connectance_plot <- 
+  ggplot(modularity_df, aes(x = Month, y = Connectance, group = 1)) +
+  geom_point(size = 3) +  # Adjust point size as needed
+  geom_line() +  # This will now connect the points
+  geom_point() +
+  theme_bw() +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+modularity_plot <- ggplot(modularity_df, aes(x = Month, y = Modularity, group = 1)) +
+  geom_point(size = 3) +  # Adjust point size as needed
+  geom_line() +  # This will now connect the points
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    legend.direction = "vertical",
+    plot.title = element_text(size = 18, hjust = 0.5),
+    axis.text.x = element_text(size = 14),
+    axis.title.y = element_text(size = 16),
+    axis.title.x = element_blank(),
+    axis.text.y = element_text(size = 14),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    strip.text = element_text(size = 16),
+    strip.background = element_rect(fill = "white", colour = "NA")
+  )
+
+#How much does each species affect the network?
+# Run node removal analysis to test robustness
+
+#Remove Chironomidae
+june_g_Chir <- delete_vertices(g_june, "Chironomidae")
+con_june_chir <- ecount(june_g_Chir) / (vcount(june_g_Chir) * (vcount(g_june) - 1))
+comm_june_Chir <- cluster_optimal(june_g_Chir)
+mod_june_chir <- modularity(comm_june_Chir)
+
+july_g_Chir <- delete_vertices(g_july, "Chironomidae")
+con_july_chir <- ecount(july_g_Chir) / (vcount(july_g_Chir) * (vcount(g_july) - 1))
+comm_july_Chir <- cluster_optimal(july_g_Chir)
+mod_july_chir <- modularity(comm_july_Chir)
+
+aug_g_Chir <- delete_vertices(g_aug, "Chironomidae")
+con_aug_chir <- ecount(aug_g_Chir) / (vcount(aug_g_Chir) * (vcount(g_aug) - 1))
+comm_aug_Chir <- cluster_optimal(aug_g_Chir)
+mod_aug_chir <- modularity(comm_aug_Chir)
+
+#Remove Culicidae
+june_g_culi <- delete_vertices(g_june, "Culicidae")
+con_june_culi <- ecount(june_g_culi) / (vcount(june_g_culi) * (vcount(g_june) - 1))
+comm_june_culi <- cluster_optimal(june_g_culi)
+mod_june_culi <- modularity(comm_june_culi)
+
+july_g_culi <- delete_vertices(g_july, "Culicidae")
+con_july_culi <- ecount(july_g_culi) / (vcount(july_g_culi) * (vcount(g_july) - 1))
+comm_july_culi <- cluster_optimal(july_g_culi)
+mod_july_culi <- modularity(comm_july_culi)
+
+#Remove Araneidae
+aug_g_ara <- delete_vertices(g_aug, "Araneidae")
+con_aug_ara <- ecount(aug_g_ara) / (vcount(aug_g_ara) * (vcount(g_aug) - 1))
+comm_aug_ara <- cluster_optimal(aug_g_ara)
+mod_aug_ara <- modularity(comm_aug_ara)
+
+july_g_ara <- delete_vertices(g_july, "Araneidae")
+con_july_ara <- ecount(july_g_ara) / (vcount(july_g_ara) * (vcount(g_july) - 1))
+comm_july_ara <- cluster_optimal(july_g_ara)
+mod_july_ara <- modularity(comm_july_ara)
+
+june_g_ara <- delete_vertices(g_june, "Araneidae")
+con_june_ara <- ecount(june_g_ara) / (vcount(june_g_ara) * (vcount(g_june) - 1))
+comm_june_ara <- cluster_optimal(june_g_ara)
+mod_june_ara <- modularity(comm_june_ara)
+
+#Remove Lycosidae
+june_g_lyc <- delete_vertices(g_june, "Lycosidae")
+con_june_lyc <- ecount(june_g_lyc) / (vcount(june_g_lyc) * (vcount(g_june) - 1))
+comm_june_lyc <- cluster_optimal(june_g_lyc)
+mod_june_lyc <- modularity(comm_june_lyc)
+
+july_g_lyc <- delete_vertices(g_july, "Lycosidae")
+con_july_lyc <- ecount(july_g_lyc) / (vcount(july_g_lyc) * (vcount(g_july) - 1))
+comm_july_lyc <- cluster_optimal(july_g_lyc)
+mod_july_lyc <- modularity(comm_july_lyc)
+
+aug_g_lyc <- delete_vertices(g_aug, "Lycosidae")
+con_aug_lyc <- ecount(aug_g_lyc) / (vcount(aug_g_lyc) * (vcount(g_aug) - 1))
+comm_aug_lyc <- cluster_optimal(aug_g_lyc)
+mod_aug_lyc <- modularity(comm_aug_lyc)
+
+#Remove Thomisidae
+june_g_tom <- delete_vertices(g_june, "Thomisidae")
+con_june_tom <- ecount(june_g_tom) / (vcount(june_g_tom) * (vcount(g_june) - 1))
+comm_june_tom <- cluster_optimal(june_g_tom)
+mod_june_tom <- modularity(comm_june_tom)
+
+july_g_tom <- delete_vertices(g_july, "Thomisidae")
+con_july_tom <- ecount(july_g_tom) / (vcount(july_g_tom) * (vcount(g_july) - 1))
+comm_july_tom <- cluster_optimal(july_g_tom)
+mod_july_tom <- modularity(comm_july_tom)
+
+#Remove Simuliidae
+july_g_sim <- delete_vertices(g_july, "Simuliidae")
+con_july_sim <- ecount(july_g_sim) / (vcount(july_g_sim) * (vcount(g_july) - 1))
+comm_july_sim <- cluster_optimal(july_g_sim)
+mod_july_sim <- modularity(comm_july_sim)
+
+aug_g_sim <- delete_vertices(g_aug, "Simuliidae")
+con_aug_sim <- ecount(aug_g_sim) / (vcount(aug_g_sim) * (vcount(g_aug) - 1))
+comm_aug_sim <- cluster_optimal(aug_g_sim)
+mod_aug_sim <- modularity(comm_aug_sim)
+
+#Remove Dytiscidae
+june_g_dyt <- delete_vertices(g_june, "Dytiscidae")
+con_june_dyt <- ecount(june_g_dyt) / (vcount(june_g_dyt) * (vcount(g_june) - 1))
+comm_june_dyt <- cluster_optimal(june_g_dyt)
+mod_june_dyt <- modularity(comm_june_dyt)
+
+july_g_dyt <- delete_vertices(g_july, "Dytiscidae")
+con_july_dyt <- ecount(july_g_dyt) / (vcount(july_g_dyt) * (vcount(g_july) - 1))
+comm_july_dyt <- cluster_optimal(july_g_dyt)
+mod_july_dyt <- modularity(comm_july_dyt)
+
+aug_g_dyt <- delete_vertices(g_aug, "Dytiscidae")
+con_aug_dyt <- ecount(aug_g_dyt) / (vcount(aug_g_dyt) * (vcount(g_aug) - 1))
+comm_aug_dyt <- cluster_optimal(aug_g_dyt)
+mod_aug_dyt <- modularity(comm_aug_dyt)
+
+#Combine 
+
+#combine
+chir_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Chironomidae"),
+  Connectance = c(con_june_chir, con_july_chir, con_aug_chir),
+  Modularity = c(mod_june_chir, mod_july_chir, mod_aug_chir)
+)
+cul_df <- data.frame(
+  Month = c("June", "July"),
+  Species = c("Culicidae"),
+  Connectance = c(con_june_culi, con_july_culi),
+  Modularity = c(mod_june_culi, mod_july_culi)
+)
+ara_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Araneidae"),
+  Connectance = c(con_june_ara, con_july_ara, con_aug_ara),
+  Modularity = c(mod_june_ara, mod_july_ara, mod_aug_ara)
+)
+lyc_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Lycosidae"),
+  Connectance = c(con_june_lyc, con_july_lyc, con_aug_lyc),
+  Modularity = c(mod_june_lyc, mod_july_lyc, mod_aug_lyc)
+)
+tom_df <- data.frame(
+  Month = c("June", "July"),
+  Species = c("Thomisidae"),
+  Connectance = c(con_june_tom, con_july_tom),
+  Modularity = c(mod_june_tom, mod_july_tom)
+)
+sim_df <- data.frame(
+  Month = c("July", "August"),
+  Species = c("Simuliidae"),
+  Connectance = c(con_july_sim, con_aug_sim),
+  Modularity = c(mod_july_sim, mod_aug_sim)
+)
+dyt_df <- data.frame(
+  Month = c("June", "July", "August"),
+  Species = c("Dytiscidae"),
+  Connectance = c(con_june_dyt, con_july_dyt, con_aug_dyt),
+  Modularity = c(mod_june_dyt, mod_july_dyt, mod_aug_dyt)
+)
+
+species_global_df <- chir_df %>%
+  bind_rows(cul_df) %>%
+  bind_rows(ara_df) %>%
+  bind_rows(lyc_df) %>%
+  bind_rows(tom_df) %>%
+  bind_rows(sim_df) %>%
+  bind_rows(dyt_df) %>%
+  bind_rows(modularity_df)
+
+species_global_df$Month <- factor(species_global_df$Month, levels = c("June", "July", "August"))
+species_global_df$Species <- factor(species_global_df$Species, levels = c("None", "Araneidae", "Lycosidae",
+                                                                          "Thomisidae", "Chironomidae", "Culicidae",
+                                                                          "Simuliidae", "Dytiscidae"))
+
+conplot <- ggplot(species_global_df, aes(x = Month, y = Connectance, group = Species)) +
+  geom_line(aes(color = Species), linewidth = 1) +  # This will now connect the points
+  geom_point(size = 4, aes(color = Species)) +  # Adjust point size as needed
+  theme_bw() +
+  labs(
+    color = "Family removed"
+  )+
+  scale_color_manual(values = c("#000000", "#E69F00", "#56B4E9", "#009E73",
+                                "#F0E442",  "#D55E00",
+                                "#CC79A7", "firebrick")) +
+  theme(legend.position="right",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+modplot <- ggplot(species_global_df, aes(x = Month, y = Modularity, group = Species)) +
+  geom_line(aes(color = Species), linewidth = 1) +  # This will now connect the points
+  geom_point(size = 4, aes(color = Species)) +  # Adjust point size as needed
+  theme_bw() +
+  labs(
+    color = "Family removed"
+  )+
+  scale_color_manual(values = c("#000000", "#E69F00", "#56B4E9", "#009E73",
+                                "#F0E442",  "#D55E00",
+                                "#CC79A7", "firebrick")) +
+  theme(legend.position="none",
+        legend.direction='vertical',
+        plot.title = element_text(size = 18, hjust = 0.5),
+        axis.text.x = element_text(size = 14),
+        axis.title.y = element_text(size = 16),
+        axis.title.x = element_blank(),
+        axis.text.y = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        strip.text = element_text(size=16),
+        strip.background = element_rect(fill = "white", colour = "NA"))
+
+globalind_plots <- conplot / modplot
+
+ggsave(globalind_plots, filename = "globalindices_2025.png",
+       dpi = 450, width = 13, height = 7.64)
+
+#####################
+#Piechart data
+
+june_df <- read.csv("edgelist_june_2024_Fam.csv")
+
+june_df$Pred_Group <- fct_collapse(
+  june_df$Predator,
+  Birds = c("Lapland bunting", "Snow bunting", "Wheatear"),
+  GroundSpiders = c("Phalangiidae", "Lycosidae"),
+  Orbweavers = c("Araneidae", "Thomisidae"),
+  Divingbeetle = "Dytiscidae",
+  Midges = "Chironomidae"
+)
+
+june_df <- june_df %>%
+  group_by(Pred_Group, Prey) %>%
+  summarise(
+    TotalInteraction = sum(InteractionStrength),
+    .groups = "drop"
+  )
+
+june_df$Order <- fct_collapse(
+  june_df$Prey,
+  Aranea = c("Araneidae", "Lycosidae", "Philodromidae", "Thomisidae", "Gnaphosidae"),
+  Opiliones = "Phalangiidae",
+  Coleoptera = c("Dytiscidae", "Carabidae", "Curculionidae", "Byrrhidae"),
+  Diptera = c("Chironomidae", "Culicidae"),
+  Hymenoptera = c("Ichneumonidae", "Braconidae", "Vespidae"),
+  Lepidoptera = "Noctuidae"
+)
+
+july_df <- read.csv("edgelist_july_2024_Fam.csv")
+
+july_df <- july_df %>%
+  filter(!is.na(Prey))
+
+july_df$Pred_Group <- fct_collapse(
+  july_df$Predator,
+  Birds = c("Lapland bunting", "Snow bunting", "Wheatear"),
+  Groundspiders = c("Phalangiidae", "Lycosidae", "Philodromidae"),
+  Orbweavers = c("Araneidae", "Thomisidae"),
+  Divingbeetle = "Dytiscidae",
+  Midges = "Chironomidae"
+)
+
+july_df <- july_df %>%
+  group_by(Pred_Group, Prey) %>%
+  summarise(
+    TotalInteraction = sum(InteractionStrength),
+    .groups = "drop"
+  )
+
+july_df$Order <- fct_collapse(
+  july_df$Prey,
+  Aranea = c("Araneidae", "Lycosidae", "Linyphiidae",
+             "Philodromidae", "Thomisidae", "Gnaphosidae"),
+  Opiliones = "Phalangiidae",
+  Coleoptera = c("Dytiscidae", "Carabidae", "Curculionidae", "Byrrhidae"),
+  Diptera = c("Scathophagidae", "Empididae", "Simuliidae",
+              "Anthomyiidae", "Chironomidae", "Culicidae",
+              "Sciaridae", "Syrphidae", "Tachinidae", "Tipulidae"),
+  Hymenoptera = "Ichneumonidae",
+  Lepidoptera = c("Geometridae", "Noctuidae", "Tortricidae"),
+  Sarcoptiformes = "Oribatulidae"
+)
+
+aug_df <- read.csv("edgelist_august_2024_Fam.csv")
+
+aug_df <- aug_df %>%
+  filter(!Prey %in% "Fringillidae") %>%
+  filter(!Prey %in% "Corvidae")
+
+aug_df$Pred_Group <- fct_collapse(
+  aug_df$Predator,
+  Birds = "Wheatear",
+  Groundspiders = c("Lycosidae", "Philodromidae"),
+  Orbweavers = "Araneidae",
+  Divingbeetle = "Dytiscidae",
+  Predatoryflies = "Scathophagidae"
+)
+
+aug_df <- aug_df %>%
+  group_by(Pred_Group, Prey) %>%
+  summarise(
+    TotalInteraction = sum(InteractionStrength),
+    .groups = "drop"
+  )
+
+aug_df$Order <- fct_collapse(
+  aug_df$Prey,
+  Aranea = c("Araneidae", "Lycosidae"),
+  Coleoptera = "Dytiscidae",
+  Diptera = c("Scathophagidae", "Empididae", "Simuliidae",
+              "Chironomidae"),
+  Hymenoptera = "Ichneumonidae"
+)
+
+writexl::write_xlsx(june_df, "Piechart_june24.xlsx")
+writexl::write_xlsx(july_df, "Piechart_july24.xlsx")
+writexl::write_xlsx(aug_df, "Piechart_aug24.xlsx")
+
+
+######
+#BLOODMEAL SAMPLES
+#####
+#Include only bloodmeal primers
+included_primers <- c("P16S", "12S-V5")
+
+Bloodmeal_filter <- Insect_ID %>%
+  filter(PrimerPair == included_primers)
+
+Bloodmeal_filter <- Bloodmeal_filter %>%
+  filter(!Order %in% "NA")
+
+#Only include bloodmeal samples from diel matrix
+diet_matrix_blood <- diet_matrix[, colnames(diet_matrix) %in% Bloodmeal_filter$Sample]
+
+##Add prey names to the rows
+prey_names_blood <- prey_data %>%
+  pull(Order)
+
+#Add prey names as a column
+diet_long_blood <- diet_matrix_blood %>%
+  as.data.frame() %>%         # ensure it's a dataframe
+  mutate(Prey = prey_names_blood) %>%
+  pivot_longer(
+    cols = -Prey,             # keep Prey column
+    names_to = "PredatorSample",
+    values_to = "Presence"
+  )
+
+#Keep only bloodmeal prey
+diet_long_blood <- diet_long_blood %>%
+  filter(Prey %in% c("Passeriformes", "Artiodactyla",
+                     "Carnivora", "Primates"))
+
+#Make all samples Aedes
+diet_long_blood <- diet_long_blood %>%
+  mutate(PredatorSample = "Aedes")
+
+#Sum presence per Predator-Prey combination
+interaction_counts <- diet_long_blood %>%
+  group_by(PredatorSample, Prey) %>%
+  summarise(TotalPresence = sum(Presence), .groups = "drop")
+
+# 3. Calculate total number of samples per predator
+total_samples <- diet_long_blood %>%
+  group_by(PredatorSample) %>%
+  summarise(TotalSamples = n(), .groups = "drop")
+
+# 4. Join totals and calculate interaction strength
+edgelist_blood <- interaction_counts %>%
+  left_join(total_samples, by = "PredatorSample") %>%
+  mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
+  select(PredatorSample, Prey, InteractionStrength)
+
+# Convert to matrix format
+network_blood <- edgelist_blood %>%
+  pivot_wider(
+    names_from = PredatorSample,
+    values_from = InteractionStrength,
+    values_fill = 0
+  ) %>%
+  column_to_rownames("Prey") %>%  # rows = prey
+  as.matrix()
+
+rownames(network_blood)
+colnames(network_blood)
+
+plotweb(network_blood,
+        text_size = 0.5)
+
+png("bloodmeal_web.png", width = 3000, height = 1500, res = 300)
+
+plotweb(
+  network_blood,
+  text_size = 0.5
+)
+
+dev.off()
+
+###################
+
+#Tri-trophic network visualization
+library(igraph)
+library(tidygraph)
+library(ggraph)
+
+edgelist_clean <- read.csv("edgelist_2024_Fam.csv")
+
+edgelist_clean <- edgelist_clean[,2:4]
+
+
+#Create basic graph
+#Add the interactions
+g <- graph_from_data_frame(
+  edgelist_clean,
+  directed = TRUE,
+  vertices = unique(c(edgelist_clean$Predator, edgelist_clean$Prey))
+)
+
+#Add interaction strength as weights
+E(g)$weight <- edgelist_clean$InteractionStrength
+
+#Check if it worked
+g
+is_weighted(g)
+
+#Weighted degree metrics
+strength_in  <- strength(g, mode = "in",  weights = E(g)$weight)
+strength_out <- strength(g, mode = "out", weights = E(g)$weight)
+
+#Add trophic level to each predator and prey
+A <- as_adjacency_matrix(g, attr = "weight", sparse = FALSE)
+
+# Normalize rows to diet proportions
+P <- A / rowSums(A)
+P[is.na(P)] <- 0
+
+n <- nrow(P)
+I <- diag(n)
+
+TL <- solve(I - P, rep(1, n))
+names(TL) <- V(g)$name
+
+V(g)$trophic_level <- TL
+
+summary(V(g)$trophic_level)
+
+#Define three trophic levels
+V(g)$trophic_class <- cut(
+  V(g)$trophic_level,
+  breaks = c(-Inf, 1.5, 3.5, Inf),
+  labels = c("Basal", "Intermediate", "Top")
+)
+
+
+
+table(V(g)$trophic_class)
+tapply(V(g)$trophic_level, V(g)$trophic_class, range)
+
+V(g)$rank <- as.numeric(V(g)$trophic_class)
+V(g)$rank
+
+#Plot using tidygraph and ggraph
+lay <- layout_with_sugiyama(
+  g,
+  layers = V(g)$rank,
+  reorder = TRUE,  # reorders nodes horizontally for fewer crossings
+  hgap = 2,   # horizontal gap between nodes
+  vgap = 3    # vertical gap between layers
+)
+
+V(g)$trophic_level[V(g)$name %in% c("Snow bunting", "Lapland bunting",
+                                    "Wheatear")] <- max(V(g)$trophic_level) + 0.1
+
+tg <- as_tbl_graph(g)
+
+ggraph(tg, layout = "manual",
+       x = lay$layout[,1],
+       y = -lay$layout[,2]) +   # top predators are at the top
+  geom_edge_link(aes(width = weight), alpha = 0.6) +
+  geom_node_text(aes(label = name, color = trophic_class), size = 3, repel = TRUE) +
+  scale_edge_width(range = c(0.3, 2)) +
+  theme_graph(base_family = "Arial")
+
+species_trophic <- data.frame(
+  Species = V(g)$name,
+  TrophicLevel = V(g)$trophic_level
+)
+
+species_trophic
+
+
+# Show TL and prey of a species
+data.frame(
+  Species = V(g)$name,
+  TrophicLevel = V(g)$trophic_level,
+  PreyCount = degree(g, mode = "out"),
+  PredatorCount = degree(g, mode = "in")
+)
+
