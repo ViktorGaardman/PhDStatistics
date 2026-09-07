@@ -13,6 +13,8 @@ rm(list=ls())
 
 options(contrasts = c("contr.sum", "contr.poly"))
 
+set.seed(123)
+
 df <- read.csv("TrappingCombinations.csv", sep =";", h = T)
 
 #Sampled individuals per hour
@@ -56,7 +58,7 @@ species_boxplot <- ggplot(df, aes(x = TrapType, y = CountPerHour, color=
   theme_classic()+
   scale_color_manual(values = c("#56B4E9", "#E69F00")) +
   ylab("Individuals per hour")+
-  scale_y_continuous(limits = c(0,20)) +
+#  scale_y_continuous(limits = c(0,20)) +
   theme(
     axis.text.y = element_text(size = 12),
     axis.text.x = element_text(size = 14),
@@ -79,46 +81,106 @@ family_boxplot <- ggplot(df, aes(x = TrapType, y = CountPerHour, color=
   theme_classic()+
   scale_color_manual(values = c("#56B4E9", "#E69F00")) +
   ylab("Individuals per hour")+
-  scale_y_continuous(limits = c(0,20)) +
+#  scale_y_continuous(limits = c(0,20)) +
   theme(
     axis.text.y = element_text(size = 12),
-    axis.text.x = element_blank(),
+    axis.text.x = element_text(size = 14),
     axis.title.x = element_blank(),
     axis.title.y = element_text(size = 14),
     legend.title = element_blank(),
     legend.text = element_text(size = 14),
-    axis.ticks.x = element_blank(),
     strip.text = element_text(size = 14),
     legend.position = "none"
   )
 
 family_boxplot
 
-boxplots <- (family_boxplot / species_boxplot) + plot_annotation(tag_levels = "A")
-
-ggsave(boxplots, filename = "Fig1.TIFF", dpi = 450,
-       height = 10.56, width = 10)
+family_boxplot_2 <- family_boxplot / plot_spacer()
 
 
-comp_mod <- glmmTMB::glmmTMB(
+
+df$Family <- as.factor(df$Family)
+df$TrapType <- as.factor(df$TrapType)
+df$CountPerHour <- as.numeric(df$CountPerHour)
+
+
+compmod_Fam <- glmmTMB::glmmTMB(
   CountPerHour ~ Family * TrapType + (1|Date_Num),
   family = Gamma(link = "log"),
   data = df
 )
 
-testResiduals(comp_mod, plot = TRUE)
+simulationOutput <- simulateResiduals(fittedModel = compmod_Fam)
 
-summary(comp_mod)
 
-Anova(comp_mod, type = "3")
+png("ModDiag_Bait_Fam.png", width = 3000, height = 1500, res = 300)
 
-pair <- emmeans(comp_mod, ~ Species * TrapType, , 
+
+
+plot(simulationOutput)
+
+dev.off()
+
+testOutliers(simulationOutput)
+testDispersion(simulationOutput)
+testUniformity(simulationOutput)
+
+summary(compmod_Fam)
+
+Anova(compmod_Fam, type = "3")
+
+pair <- emmeans(compmod_Fam, ~ TrapType | Family, 
                 type = "response", adjust = "none")
 
 pairs(pair)
 print(pair)
 
+comp_pred <- emmeans(
+  compmod_Fam,
+  ~ Family | TrapType,
+  type = "response"
+)
 
+plot_pred_comp <- as.data.frame(comp_pred)
+
+predicted_comppred <- ggplot() +
+  geom_jitter(data = df, aes(x = TrapType, y = CountPerHour, color = Family), alpha = 0.5,
+              width = 0.1) +
+  geom_errorbar(
+    data = plot_pred_comp,
+    aes(
+      x = TrapType,
+      ymin = asymp.LCL,
+      ymax = asymp.UCL,
+      color = Family
+    ),
+    width = 0.2,
+    linewidth = 1
+  ) +
+  geom_point(data = plot_pred_comp, aes(x = TrapType, y = response, color = Family), size = 4) +
+  #  scale_y_continuous(limits = c(-2, 10), breaks = scales::pretty_breaks(n = 11)) +
+  theme_classic() +
+  ylab("Individuals per hour") +
+  facet_wrap(~ Family, scales = "free_y") +
+  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  theme(
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 14),
+    legend.position = "none",
+    strip.text = element_text(size = 14)
+  )
+
+predicted_comppred
+
+
+boxplots <- (predicted_comppred / species_boxplot) + plot_annotation(tag_levels = "A")
+
+boxplots_h <- boxplots + plot_layout(heights = c(1, 2))
+
+ggsave(boxplots_h, filename = "Fig2_CO2.png", dpi = 450,
+       height = 10.56, width = 10)
 
 
 
@@ -372,44 +434,99 @@ min(filter$mlpermin)
 max(filter$mlpermin)
 mean(filter$mlpermin)
 
+
+
 #Add dummy 0s at 8:00
-CO2_plotdf <- CO2_min %>%
-  select(Hour, mlpermin)
+CO2_df <- CO2_min |> 
+  mutate(
+    Year = str_sub(`EVENT DATE`, 7,8),
+    Month = str_sub(`EVENT DATE`, 4,5),
+    Day = str_sub(`EVENT DATE`, 1, 2)# extract MM from DDMMYY
+  )
 
-CO2_min1 <- rbind(CO2_plotdf, data.frame(Hour = 8, mlpermin = 0))
-CO2_min2 <- rbind(CO2_min1, data.frame(Hour = 8, mlpermin = 0))
-CO2_min3 <- rbind(CO2_min2, data.frame(Hour = 8, mlpermin = 0))
-CO2_min4 <- rbind(CO2_min3, data.frame(Hour = 8, mlpermin = 0))
-CO2_min5 <- rbind(CO2_min4, data.frame(Hour = 8, mlpermin = 0))
+CO2_df <- CO2_df |> 
+  mutate(
+    Day = fct_recode(
+      Day,
+      "03" = "13",
+      "15" = "25",
+      "31" = "10",
+      
+    ))
 
-CO2_plot <- CO2_min5 %>%
+CO2_filt <- CO2_df |> 
+  select(c(Hour, mlpermin, Day))
+
+CO2_min0 <- rbind(CO2_filt, data.frame(Hour = 8, mlpermin = 0, Day = c("03", "15", "31")))
+
+
+CO2_plot <- CO2_min0 %>%
   mutate(
     HourCult = Hour - 8
   )
 
+#Create a linear graph of release rates
+CO2_mean <- CO2_plot |>
+  group_by(HourCult) |> 
+  summarize(
+    mean_rate = mean(mlpermin),
+    sd_rate = sd(mlpermin)
+  )
+
+CO2_plot <- CO2_plot |> 
+  mutate(
+    Day = fct_relevel(Day, "03", "15", "31")
+  )
+
+min(CO2_plot$mlpermin)
+
 #Look at data
 mlpermin_plotraw <- ggplot(CO2_plot, aes(x = HourCult, y = mlpermin)) + 
-  geom_point()+
   theme_bw()+
-  xlab("Hours of cultivation")+
+  xlab("Hours of fermentation")+
   ylab("ml CO2 / min")+
-  geom_smooth(
-    method = "gam",
-    formula = y ~ poly(x, 4),
-    se = FALSE,
-    color = "cornflowerblue"
+  geom_point(color = "grey20", size = 2, alpha = 0.7)+
+#  scale_color_manual(values = c("#D55E00", "#56B4e9", "#CC79A7")) +
+  geom_hline(yintercept = 185, col = "black", linetype = "dashed", lwd = 0.5) +
+  geom_line(
+    data = CO2_mean,
+    aes(y = mean_rate,
+    x = HourCult),
+    linewidth = 0.8
   ) +
+  geom_errorbar(
+    data = CO2_mean,
+    aes(
+    x = HourCult,
+    ymax = mean_rate + sd_rate,
+    ymin = mean_rate - sd_rate),
+    width = 0.2,
+    linewidth = 0.8,
+    inherit.aes = FALSE
+  ) +
+
+#  geom_smooth(
+#    method = "gam",
+#    formula = y ~ poly(x, 4),
+#    se = FALSE,
+#    color = "black"
+#  ) +
   scale_x_continuous(limits = c(0,14), n.breaks = 8)+
   theme(axis.title.y = element_text(size=16),
         axis.title.x = element_text(size=16),
         axis.text = element_text(size = 14),
         panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank())
+        panel.grid.major = element_blank(),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12)
+        )
 
 mlpermin_plotraw
 
-ggsave(plot = mlpermin_plotraw, filename = "ml_per_min.TIFF",
-       dpi = 300, height= 3.5, width = 6.5)
+mlpermin_plots <- (mlpermin_plotraw / temp_timeplot) + plot_annotation(tag_levels = 'A')
+
+ggsave(plot = mlpermin_plotraw, filename = "Fig3_Co2.png",
+       dpi = 450, height= 4, width = 6.5)
 
 #model
 #First calculate mean temp per day
@@ -488,6 +605,12 @@ comp_df <- comp_df %>%
   mutate_at(c("Site", "Type",
             "Date", "Species", "Group"), as.factor)
 
+summ <- comp_df |> 
+  group_by(Group, Type) |> 
+  summarize(
+    sum = sum(Count)
+  )
+
 #Make a gamma model instead of lmer(?)
 comp_mod <- glmmTMB::glmmTMB(
   CountPerHour ~ Type * Species + (1|Date) + (1|Site),
@@ -495,13 +618,27 @@ comp_mod <- glmmTMB::glmmTMB(
     data = comp_df
 )
 
-testResiduals(comp_mod, plot = TRUE)
+
+simulationOutput <- simulateResiduals(fittedModel = comp_mod)
+
+
+png("ModDiag_CO2_Species.png", width = 3000, height = 1500, res = 300)
+
+
+
+plot(simulationOutput)
+
+dev.off()
+
+testOutliers(simulationOutput)
+testDispersion(simulationOutput)
+testUniformity(simulationOutput)
 
 summary(comp_mod)
 
 Anova(comp_mod, type = "3")
 
-pair <- emmeans(comp_mod, ~ Species * Type, , 
+pair <- emmeans(comp_mod, ~ Type | Species, 
                 type = "response", adjust = "none")
 
 pairs(pair)
@@ -509,7 +646,7 @@ print(pair)
 
 emm <- emmeans(
   comp_mod,
-  ~ Species | Type,
+  ~ Type | Species,
   type = "response"
 )
 
@@ -595,13 +732,26 @@ group_mod <- glmmTMB::glmmTMB(
   data = group_df
 )
 
-testResiduals(group_mod, plot = TRUE)
+simulationOutput <- simulateResiduals(fittedModel = group_mod)
+
+
+png("ModDiag_CO2_Fam.png", width = 3000, height = 1500, res = 300)
+
+
+
+plot(simulationOutput)
+
+dev.off()
+
+testOutliers(simulationOutput)
+testDispersion(simulationOutput)
+testUniformity(simulationOutput)
 
 summary(group_mod)
 
 Anova(group_mod, type = "3")
 
-pair <- emmeans(group_mod, ~ Group * Type, , 
+pair <- emmeans(group_mod, ~ Type | Group, 
                 type = "response", adjust = "none")
 
 pairs(pair)
@@ -651,7 +801,113 @@ predicted_group
 
 predicted_catch <- predicted_group / predicted_pred
 
-pred_catch <- predicted_catch + plot_annotation(tag_levels = "A")
+pred_catch <- predicted_catch + plot_annotation(tag_levels = "A") + plot_layout(heights = c(1,2))
 
-ggsave(pred_catch, filename = "Fig3.TIFF", dpi = 450,
+ggsave(pred_catch, filename = "Fig4_CO2.png", dpi = 450,
        height = 10.56, width = 10)
+
+
+##Calculate mean temp
+
+Tempdf_raw <- read.delim("TempData_Kobb.txt")
+
+Tempdf <- Tempdf_raw |> 
+  mutate(
+    Year = str_sub(Date, 3,4),
+    Month = str_sub(Date, 6,7),
+    Day = str_sub(Date, 9, 10)# extract MM from DDMMYY
+    )
+
+Tempdf <- Tempdf |> 
+  filter(Year == "25",
+         Month == "07", 
+         Day %in% c("03", "15" ,"31")) 
+
+Tempdf <- Tempdf |>
+  filter(
+    Time >= "08:00:00",
+    Time <= "22:00:00"
+  )
+
+Tempdf <- Tempdf |> 
+  mutate(time_sec = period_to_seconds(hms(Time)) / 3600)
+
+Tempdf <- Tempdf |> 
+  mutate(
+  Day = fct_relevel(Day, "03", "15", "31")
+  )
+
+temp_timeplot <- ggplot(Tempdf, aes(x = (time_sec - 8), y = air_temperature_2m,
+                   color = Day)) +
+  theme_bw()+
+#  stat_smooth(method = 'gam', 
+#              formula = y ~ poly(x, 3),
+#              se = FALSE,
+#              color = "black"
+#  )+
+  scale_color_manual(values = c("#D55E00", "#56B4e9", "#CC79A7")) +
+  geom_point(size = 2)+
+  xlab("Hours of fermentation")+
+  ylab("Temperature (°C)")+
+  scale_x_continuous(limits = c(0,14), n.breaks = 8)+
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=16),
+        axis.title.x = element_text(size=16),
+        axis.text = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+
+temp_timeplot
+
+#Mean temp during CO2 release rate
+CO2_df <- CO2_min |> 
+  mutate(
+    Year = str_sub(`EVENT DATE`, 7,8),
+    Month = str_sub(`EVENT DATE`, 4,5),
+    Day = str_sub(`EVENT DATE`, 1, 2)# extract MM from DDMMYY
+  )
+
+CO2_df <- CO2_df |> 
+  mutate(
+  Day = fct_recode(
+    Day,
+    "03" = "13",
+              "15" = "25",
+             "31" = "10",
+              
+  ))
+
+CO2_filt <- CO2_df |> 
+  select(c(Hour, mlpermin, Day))
+
+Tempdf$Hour <- Tempdf$time_sec
+
+Tempdf_filt <- Tempdf |> 
+  select(c(air_temperature_2m, Hour, Day))
+
+Release_df <- CO2_filt |> 
+  left_join(Tempdf_filt, by = c("Hour", "Day"))
+
+release_mod <- lm(mlpermin ~ air_temperature_2m,
+                  data = Release_df)
+
+summary(release_mod)
+car::Anova(release_mod, type = '2')
+
+ml_timeplot <- ggplot(Release_df, aes(x = air_temperature_2m, y = mlpermin, color = Day)) +
+  theme_bw()+
+  scale_color_manual(values = c("#D55E00", "#56B4e9", "#CC79A7")) +
+#  stat_smooth(method = 'lm', color = "black") +
+  geom_point()+
+  ylab("ml CO2 / min")+
+  xlab("Temperature (°C)")+
+  scale_x_continuous(
+    n.breaks = 6)+
+  facet_wrap(~Day, scales = "free_x") +
+  theme(legend.position = "none",
+        axis.title.y = element_text(size=16),
+        axis.title.x = element_text(size=16),
+        axis.text = element_text(size = 14),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank())
+ml_timeplot
