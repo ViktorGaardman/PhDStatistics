@@ -1,5 +1,4 @@
 library(tidyverse)
-library(readr)
 
 #1. Read and prepare the text files containing CO2 release rates
 

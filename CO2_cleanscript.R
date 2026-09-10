@@ -1,20 +1,15 @@
 library(tidyverse)
-library(readr)#?
-library(lme4)#?
 library(car)
 library(emmeans)
-library(lubridate) #?
 library(DHARMa)
 library(patchwork)
 library(glmmTMB)
-
 
 rm(list=ls())
 
 options(contrasts = c("contr.sum", "contr.poly"))
 
 set.seed(123)
-
 
 #1. CO2 release rates
 CO2_min <- read_csv("CO2_per_minute.csv")
