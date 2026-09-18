@@ -127,7 +127,7 @@ species_boxplot <- ggplot(df_attractant, aes(x = TrapType, y = CountPerHour, col
   geom_boxplot(position = position_dodge(width = 0.75)) +
   geom_point(position = position_dodge(width = 0.75)) +
   theme_classic()+
-  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  scale_color_manual(values = c("#4590ba", "#b87f00")) +
   ylab("Individuals per hour")+
   theme(
     axis.text.y = element_text(size = 12),
@@ -198,7 +198,7 @@ predicted_attractant <- ggplot() +
   theme_classic() +
   ylab("Individuals per hour") +
   facet_wrap(~ Family, scales = "free_y") +
-  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  scale_color_manual(values = c("#4590ba", "#b87f00")) +
   theme(
     axis.text.y = element_text(size = 12),
     axis.text.x = element_text(size = 14),
@@ -213,7 +213,6 @@ predicted_attractant
 attractant_plots <- (predicted_attractant / species_boxplot) + plot_annotation(tag_levels = "A")
 
 attractant_plots <- attractant_plots + plot_layout(heights = c(1, 2))
-
 
 #3. Yeast-canister comparison
 
@@ -298,7 +297,7 @@ predicted_comp_sp <- ggplot() +
   theme_classic() +
   ylab("Individuals per hour") +
   facet_wrap(~ Species, scales = "free_y") +
-  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  scale_color_manual(values = c("#4590ba", "#b87f00")) +
   theme(
     axis.text.y = element_text(size = 12),
     axis.text.x = element_blank(),
@@ -356,7 +355,7 @@ predicted_comp_fam <- ggplot() +
   theme_classic() +
   ylab("Individuals per hour") +
   facet_wrap(~ Group, scales = "free_y") +
-  scale_color_manual(values = c("#56B4E9", "#E69F00")) +
+  scale_color_manual(values = c("#4590ba", "#b87f00")) +
   theme(
     axis.text.y = element_text(size = 12),
     axis.text.x = element_blank(),
