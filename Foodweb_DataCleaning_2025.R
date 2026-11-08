@@ -10,10 +10,16 @@ matrix <- read_xlsx("mergedData_wide_ReadCounts_2025.xlsx")
 
 levels(as.factor(matrix$Phylum))
 
+#Här har vi gamla "remove predator DNA" koden som känns fel. 
+#Byt till nya RRA versionen
 
-#Remove the plants and worms for now
+#Fixa även allting med family names från RRA koden
+
+#Gör detsamma för 2024
+
+#Remove all non-arthropods
 matrix <- matrix |> 
-  filter(!Phylum %in% c("Streptophyta", "Annelida"))
+  filter(!Phylum %in% c("Streptophyta", "Annelida", "Chordata"))
 
 #Remove prey species that don't exist in Greenland
 matrix <- matrix |> 
@@ -21,15 +27,25 @@ matrix <- matrix |>
                          "Phyllobius_pyri", "Strophosoma_capitatum"))
 
 #Remove prey families that don't exist in Greenland
+#OBS DET FINNS MASSA SKIT HÄR, GÅ IGENOM HELA DIET MATRIX
 matrix <- matrix %>%
   filter(!Family %in% c("Blattidae", "Formicidae", "Elateridae", "Cantharidae",
                         "Lasiocampidae", "Elmidae", "Xylophagidae", "Pentatomidae",
-                        "Rhagionidae"))
+                        "Rhagionidae", "Clubionidae", "Anyphaenidae",
+                        "Chaoboridae", "Clusiidae", 
+                        ""))
 
 
 diet_matrix <- matrix[, 8:1018]
 
 prey_data <- matrix[, 1:7]
+
+diet_matrix <- diet_matrix %>%
+  mutate(Family = prey_data$Family) %>%
+  filter(!is.na(Family)) %>%
+  group_by(Family) %>%
+  summarise(across(everything(), max),
+            .groups = "drop")
 
 diet_matrix <- ifelse(diet_matrix > 0, 1, 0)
 
@@ -368,11 +384,6 @@ write.csv(edgelist_august_Fam, "edgelist_august_2025_Fam.csv")
 
 ####RRA version
 
-#Things to clear up:
-#We calculate RRA in matrix. Then we read long format (Insect_ID) and
-#use the raw counts from those instead further down I think. It is confusing.
-
-
 library(readxl)
 library(readr)
 library(tidyverse)
@@ -395,21 +406,23 @@ matrix <- matrix |>
                          "Phyllobius_pyri", "Strophosoma_capitatum"))
 
 #Remove prey families that don't exist in Greenland
-#Remove unlikely families
 matrix <- matrix %>%
   filter(!Family %in% c("Blattidae", "Formicidae", "Elateridae", "Cantharidae",
                       "Lasiocampidae", "Elmidae", "Xylophagidae", "Pentatomidae",
                       "Rhagionidae"))
 
-diet_matrix <- matrix[, 8:1018]
+diet_matrix_rel <- matrix[, 8:1018]
 
 prey_data <- matrix[, 1:7]
 
-#RRA per predator sample
-diet_matrix_rel <- sweep(
-diet_matrix, 2,
-colSums(diet_matrix),
-"/") 
+#Aggregate dataset to family level
+diet_matrix_rel <- diet_matrix_rel %>%
+  mutate(Family = prey_data$Family) %>%
+  filter(!is.na(Family)) %>%
+  group_by(Family) %>%
+  summarise(across(everything(), sum),
+            .groups = "drop")
+
 
 Insect_ID <- read.csv("mergedData_long_format_2025.csv", sep = ";")
 
@@ -493,7 +506,8 @@ levels(as.factor(Insect_Filter$PrimerPair))
 #Sum reads across remaining primers
 summed_reads <- Insect_Filter %>%
   group_by(Sample, Family, Genus, Month) %>%
-  summarise(total_reads = sum(Count), .groups = "drop")
+  summarise(total_reads = sum(Count),
+            .groups = "drop")
 
 #Remove non-spider arthropod predators from field data
 dominant_spidersbirds <- summed_reads %>%
@@ -585,17 +599,22 @@ diet_june_Fam   <- monthly_matrices$June
 diet_july_Fam   <- monthly_matrices$July
 diet_august_Fam <- monthly_matrices$August
 
-#EVerything is good up until here. Except we need to remove unwanted species from
-#insect ID
+# Store prey family names separately
+prey_names <- diet_matrix_rel$Family
 
+# Remove family column, leaving only sample columns
+diet_matrix_clean <- diet_matrix_rel %>%
+  select(-Family)
 
-#Remove the bloodmeal samples from diel matrix
-diet_matrix_clean <- diet_matrix_rel[, colnames(diet_matrix_rel) %in% predator_lookup$Sample]
+# Remove samples not identified as predators
+diet_matrix_clean <- diet_matrix_clean[,
+                                       colnames(diet_matrix_clean) %in% predator_lookup$Sample
+]
 
-# 1. Store original column names
+# Store original column names
 original_colnames <- colnames(diet_matrix_clean)
 
-#Replace names using the lookup vector
+# Replace sample IDs with predator families
 lookup_vector <- setNames(predator_lookup$Family, predator_lookup$Sample)
 new_colnames <- lookup_vector[original_colnames]
 
@@ -617,11 +636,6 @@ write_csv(as.data.frame(diet_june_Fam), "diet_matrix_june_Fam25_RRA.csv")
 write_csv(as.data.frame(diet_july_Fam), "diet_matrix_july_Fam25_RRA.csv")
 write_csv(as.data.frame(diet_august_Fam), "diet_matrix_august_Fam25_RRA.csv")
 
-diet_matrix_clean <- read.csv("diet_Matrix_Fam25_RRA.csv")
-
-#Add prey names to the rows (here genera)
-prey_names <- prey_data$Family
-
 #Store original column names
 original_colnames <- colnames(diet_matrix_clean)
 
@@ -635,54 +649,44 @@ diet_long <- diet_matrix_clean %>%
   pivot_longer(
     cols = -Prey,             # keep Prey column
     names_to = "PredatorSample",
-    values_to = "RRA"
+    values_to = "TotalReads"
   )
 
 #Add original names back
 diet_long <- diet_long %>%
   mutate(Predator = sub("_sample_.*", "", PredatorSample))
 
-#Sum presence per Predator-Prey combination
-interaction_counts <- diet_long %>%
+#remove predator DNA
+diet_long_clean <- diet_long %>%
+  filter(Prey != Predator) %>%
+  filter(!Prey %in% "NA") %>%
+  filter(TotalReads > 0)
+
+#Calculate RRA within each sample
+diet_long_clean <- diet_long_clean %>%
+  group_by(PredatorSample) %>%
+  mutate(
+    SampleRRA = TotalReads / sum(TotalReads, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+n_pred_samples <- diet_long %>%
+  distinct(Predator, PredatorSample) %>%
+  count(Predator, name = "N")
+
+edgelist <- diet_long_clean %>%
   group_by(Predator, Prey) %>%
-  summarise(TotalPresence = sum(Presence), .groups = "drop")
+  summarise(
+    SumRRA = sum(SampleRRA),
+    .groups = "drop"
+  ) %>%
+  left_join(n_pred_samples, by = "Predator") %>%
+  mutate(
+    MeanRRA = SumRRA / N
+  )
 
-# 3. Calculate total number of samples per predator
-total_samples <- diet_long %>%
-  group_by(Predator) %>%
-  summarise(TotalSamples = n(), .groups = "drop")
 
-# 4. Join totals and calculate interaction strength
-edgelist <- interaction_counts %>%
-  left_join(total_samples, by = "Predator") %>%
-  mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
-  select(Predator, Prey, InteractionStrength)
-
-# 5. Optional: remove zero interactions (if you only want non-zero links)
-edgelist <- edgelist %>% filter(InteractionStrength > 0)
-
-#Check list
-head(edgelist)
-
-levels(as.factor(edgelist$Prey))
-
-edgelist <- edgelist %>%
-  filter(!Prey %in% "NA")
-
-# Create a new column with prey genus (everything before the first underscore)
-#edgelist <- edgelist %>%
-#  mutate(PreyGenus = sub("_.*", "", Prey))
-
-#Remove predator DNA/cannibalism
-#edgelist_clean <- edgelist %>%
-#  filter(Predator != Prey) %>%  
-#  select(-Prey)                
-
-#Remove predator DNA/cannibalism (Family level)
-edgelist_clean <- edgelist %>%
-  filter(Predator != Prey)
-
-write.csv(edgelist_clean, "edgelist_2025_FamRRA.csv")
+write.csv(edgelist, "edgelist_2025_FamRRA.csv")
 
 diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
   
@@ -694,40 +698,57 @@ diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
     original_colnames,
     sep = "_sample_"
   )
-  
-  # Convert to long format
+  # 3. Convert to long format
   diet_long <- diet_matrix %>%
     as.data.frame() %>%
     mutate(Prey = prey_names) %>%
     pivot_longer(
       cols = -Prey,
       names_to = "PredatorSample",
-      values_to = "RRA"
-    ) %>%
-    mutate(
-      Predator = sub("_sample_.*", "", PredatorSample)
+      values_to = "TotalReads"
     )
   
-  # Mean RRA across predator samples
-  edgelist <- diet_long %>%
+  # 4. Recover predator genus from column names
+  diet_long <- diet_long %>%
+    mutate(Predator = sub("_sample_.*", "", PredatorSample))
+  
+  #remove predator DNA
+  diet_long_clean <- diet_long %>%
+    filter(Prey != Predator) %>%
+    filter(!Prey %in% "NA") %>%
+    filter(TotalReads > 0)
+  
+  #Calculate RRA within each sample
+  diet_long_clean <- diet_long_clean %>%
+    group_by(PredatorSample) %>%
+    mutate(
+      SampleRRA = TotalReads / sum(TotalReads, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  n_pred_samples <- diet_long %>%
+    distinct(Predator, PredatorSample) %>%
+    count(Predator, name = "N")
+  
+  edgelist <- diet_long_clean %>%
     group_by(Predator, Prey) %>%
     summarise(
-      meanRRA = mean(RRA, na.rm = TRUE),
+      SumRRA = sum(SampleRRA),
       .groups = "drop"
     ) %>%
-    filter(
-      meanRRA > 0,
-      Predator != Prey,
-      !is.na(Prey),
-      Prey != "NA"
+    left_join(n_pred_samples, by = "Predator") %>%
+    mutate(
+      MeanRRA = SumRRA / N
     )
   
   return(edgelist)
 }
 
-edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_data$Family)
-edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_data$Family)
-edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_data$Family)
+prey_names <- diet_matrix_rel$Family
+
+edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_names)
+edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_names)
+edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_names)
 
 
 write.csv(edgelist_june_Fam, "edgelist_june_2025_FamRRA.csv")
