@@ -2,9 +2,6 @@ library(readxl)
 library(readr)
 library(tidyverse)
 
-#HANG ON. WE HAVE TWO LOCI--DOES THAT MEAN THAT RRA SHOULD BE CALCULATED AFTER WE
-#COMBINE ALL READS ACROSS PRIMERS?
-
 rm(list = ls())
 
 set.seed(123)
@@ -21,7 +18,12 @@ diet_matrix <- matrix[, 9:489]
 
 prey_data <- matrix[, 1:8]
 
-diet_matrix <- ifelse(diet_matrix > 0, 1, 0)
+diet_matrix <- diet_matrix %>%
+  mutate(Family = prey_data$Family) %>%
+  filter(!is.na(Family)) %>%
+  group_by(Family) %>%
+  summarise(across(everything(), max),
+            .groups = "drop")
 
 Insect_ID <- read.csv("mergedData_long_format_no_zotu_2024.csv", sep = ";")
 
@@ -185,14 +187,22 @@ diet_june_Fam   <- monthly_matrices$June
 diet_july_Fam   <- monthly_matrices$July
 diet_august_Fam <- monthly_matrices$August
 
+# Store prey family names separately
+prey_names <- diet_matrix$Family
 
-#Remove the bloodmeal samples from diel matrix
-diet_matrix_clean <- diet_matrix[, colnames(diet_matrix) %in% predator_lookup$Sample]
+# Remove family column, leaving only sample columns
+diet_matrix_clean <- diet_matrix %>%
+  select(-Family)
 
-# 1. Store original column names
+# Remove samples not identified as predators
+diet_matrix_clean <- diet_matrix_clean[,
+                                       colnames(diet_matrix_clean) %in% predator_lookup$Sample
+]
+
+# Store original column names
 original_colnames <- colnames(diet_matrix_clean)
 
-#Replace names using the lookup vector
+# Replace sample IDs with predator families
 lookup_vector <- setNames(predator_lookup$Family, predator_lookup$Sample)
 new_colnames <- lookup_vector[original_colnames]
 
@@ -214,17 +224,14 @@ write_csv(diet_june_Fam, "diet_matrix_june_Fam.csv")
 write_csv(diet_july_Fam, "diet_matrix_july_Fam.csv")
 write_csv(diet_august_Fam, "diet_matrix_august_Fam.csv")
 
-diet_matrix_clean <- read.csv("diet_Matrix_Fam.csv")
-
-
-#Add prey names to the rows (here genera)
-prey_names <- prey_data$Family
-
 #Store original column names
 original_colnames <- colnames(diet_matrix_clean)
 
 # Make them unique internally
 colnames(diet_matrix_clean) <- make.unique(original_colnames, sep = "_sample_")
+
+#Turn read counts into pres abs
+diet_matrix_clean <- ifelse(diet_matrix_clean > 0, 1, 0) 
 
 #Add prey names as a column
 diet_long <- diet_matrix_clean %>%
@@ -240,106 +247,83 @@ diet_long <- diet_matrix_clean %>%
 diet_long <- diet_long %>%
   mutate(Predator = sub("_sample_.*", "", PredatorSample))
 
-#Sum presence per Predator-Prey combination
-interaction_counts <- diet_long %>%
-  group_by(Predator, Prey) %>%
-  summarise(
-    TotalPresence = sum(Presence, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# 3. Calculate total number of samples per predator
-total_samples <- diet_long %>%
-  group_by(Predator) %>%
-  summarise(TotalSamples = n_distinct(PredatorSample), .groups = "drop")
-
-# 4. Join totals and calculate interaction strength
-edgelist <- interaction_counts %>%
-  left_join(total_samples, by = "Predator") %>%
-  mutate(
-    FrequencyOccurrence = TotalPresence / TotalSamples
-  ) %>%
-  filter(FrequencyOccurrence > 0) %>%
-  select(Predator, Prey, FrequencyOccurrence)
-
-# 5. Optional: remove zero interactions (if you only want non-zero links)
-edgelist <- edgelist %>% filter(FrequencyOccurrence > 0)
-
-#Check list
-head(edgelist)
-
-edgelist <- edgelist %>%
-  filter(!Prey %in% "NA")
-
-edgelist <- edgelist %>%
+#remove predator DNA
+diet_long_clean <- diet_long %>%
+  filter(Prey != Predator) %>%
+  filter(!Prey %in% "NA") |> 
   filter(!Prey %in% "Fringillidae")
 
-# Create a new column with prey genus (everything before the first underscore)
-#edgelist <- edgelist %>%
-#  mutate(PreyGenus = sub("_.*", "", Prey))
+edgelist <- diet_long_clean %>%
+  group_by(Predator, Prey) %>%
+  summarise(
+    TotalPresence = sum(Presence),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    diet_long %>%
+      distinct(Predator, PredatorSample) %>%
+      count(Predator, name = "N"),
+    by = "Predator"
+  ) %>%
+  mutate(
+    FOO = TotalPresence / N
+  )
 
-#Remove predator DNA/cannibalism
-#edgelist_clean <- edgelist %>%
-#  filter(Predator != Prey) %>%  
-#  select(-Prey)                
-
-#Remove predator DNA/cannibalism (Family level)
-edgelist_clean <- edgelist %>%
-  filter(Predator != Prey)
-
-write.csv(edgelist_clean, "edgelist_2024_Fam.csv")
+write.csv(edgelist, "edgelist_2024_Fam.csv")
 
 #Monthly edgeslists
 diet_matrix_to_edgelist <- function(diet_matrix, prey_names) {
-  
-  # 1. Store original column names
+  #Store original column names
   original_colnames <- colnames(diet_matrix)
   
-  # 2. Make column names unique internally
+  # Make them unique internally
   colnames(diet_matrix) <- make.unique(original_colnames, sep = "_sample_")
   
-  # 3. Convert to long format
+  #Turn read counts into pres abs
+  diet_matrix <- ifelse(diet_matrix > 0, 1, 0) 
+  
+  #Add prey names as a column
   diet_long <- diet_matrix %>%
-    as.data.frame() %>%
+    as.data.frame() %>%         # ensure it's a dataframe
     mutate(Prey = prey_names) %>%
     pivot_longer(
-      cols = -Prey,
+      cols = -Prey,             # keep Prey column
       names_to = "PredatorSample",
       values_to = "Presence"
     )
   
-  # 4. Recover predator genus from column names
+  #Add original names back
   diet_long <- diet_long %>%
     mutate(Predator = sub("_sample_.*", "", PredatorSample))
   
-  # 5. Count prey occurrences per predator
-  interaction_counts <- diet_long %>%
-    group_by(Predator, Prey) %>%
-    summarise(TotalPresence = sum(Presence), .groups = "drop")
-  
-  # 6. Count number of samples per predator
-  total_samples <- diet_long %>%
-    group_by(Predator) %>%
-    summarise(TotalSamples = n_distinct(PredatorSample), .groups = "drop")
-  
-  # 7. Calculate interaction strength
-  edgelist <- interaction_counts %>%
-    left_join(total_samples, by = "Predator") %>%
-    mutate(InteractionStrength = TotalPresence / TotalSamples) %>%
-    select(Predator, Prey, InteractionStrength) %>%
-    filter(InteractionStrength > 0)
-  
-  # 8. Remove predator DNA / cannibalism (family-level match) and NA
-  edgelist_clean <- edgelist %>%
-    filter(Predator != Prey) %>%
+  #remove predator DNA
+  diet_long_clean <- diet_long %>%
+    filter(Prey != Predator) %>%
     filter(!Prey %in% "NA")
   
-  return(edgelist_clean)
+  edgelist <- diet_long_clean %>%
+    group_by(Predator, Prey) %>%
+    summarise(
+      TotalPresence = sum(Presence),
+      .groups = "drop"
+    ) %>%
+    left_join(
+      diet_long %>%
+        distinct(Predator, PredatorSample) %>%
+        count(Predator, name = "N"),
+      by = "Predator"
+    ) %>%
+    mutate(
+      FOO = TotalPresence / N
+    )
+  return(edgelist)
 }
 
-edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_data$Family)
-edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_data$Family)
-edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_data$Family)
+prey_names <- diet_matrix$Family
+
+edgelist_june_Fam   <- diet_matrix_to_edgelist(diet_june_Fam, prey_names)
+edgelist_july_Fam   <- diet_matrix_to_edgelist(diet_july_Fam, prey_names)
+edgelist_august_Fam <- diet_matrix_to_edgelist(diet_august_Fam, prey_names)
 
 
 write.csv(edgelist_june_Fam, "edgelist_june_2024_Fam.csv")
